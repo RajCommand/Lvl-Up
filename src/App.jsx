@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { DayTimerClock } from "./components/DayTimerClock";
 
 /**
  * Level Up: Quest Board — Solo Leveling–inspired MVP (single-file)
@@ -142,6 +143,8 @@ const DEFAULT_SETTINGS = {
   streakBonusPctPerDay: 1,
   maxStreakBonusPct: 20,
   weeklyBossEnabled: true,
+  wakeTime: "07:00",
+  bedTime: "23:00",
 };
 
 function targetForLevel(q, level) {
@@ -574,119 +577,131 @@ function TodayPanel({
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-lg font-extrabold">Today’s Quests</div>
-            <div className={cx("mt-1 text-sm", textMuted)}>
-              {fmtDateKey(today())} • {doneCount}/{total} completed • {todays.earnedXP || 0} XP gained today
+      <div className="space-y-4 lg:col-span-2">
+        <DayTimerClock
+          wakeTime={settings.wakeTime}
+          bedTime={settings.bedTime}
+          isDark={isDark}
+          border={border}
+          surface={surface}
+          textMuted={textMuted}
+          Card={Card}
+        />
+
+        <Card className="p-4" border={border} surface={surface}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-extrabold">Today’s Quests</div>
+              <div className={cx("mt-1 text-sm", textMuted)}>
+                {fmtDateKey(today())} • {doneCount}/{total} completed • {todays.earnedXP || 0} XP gained today
+              </div>
             </div>
+            <Pill tone={percent >= 80 ? "good" : percent >= 40 ? "warn" : "bad"} isDark={isDark}>
+              {percent}%
+            </Pill>
           </div>
-          <Pill tone={percent >= 80 ? "good" : percent >= 40 ? "warn" : "bad"} isDark={isDark}>
-            {percent}%
-          </Pill>
-        </div>
 
-        {debt > 0 ? (
-          <div
-            className={cx(
-              "mt-3 rounded-xl border p-3 text-sm",
-              isDark ? "border-amber-900/40 bg-amber-900/20 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
-            )}
-          >
-            <div className="font-semibold">XP Debt:</div>
-            <div>{debt} XP must be repaid before XP counts toward leveling up.</div>
-          </div>
-        ) : null}
+          {debt > 0 ? (
+            <div
+              className={cx(
+                "mt-3 rounded-xl border p-3 text-sm",
+                isDark ? "border-amber-900/40 bg-amber-900/20 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
+              )}
+            >
+              <div className="font-semibold">XP Debt:</div>
+              <div>{debt} XP must be repaid before XP counts toward leveling up.</div>
+            </div>
+          ) : null}
 
-        <div className="mt-4 space-y-2">
-          {state.quests.map((q) => {
-            const done = !!todays.completed?.[q.id]?.done;
-            const target = targetForLevel(q, level);
-            const effStreak = isCooldownActive ? 0 : streakDays;
-            const xp = xpForQuest(q, { level, streakDays: effStreak, settings, isBoss: false, modifiers: [] });
+          <div className="mt-4 space-y-2">
+            {state.quests.map((q) => {
+              const done = !!todays.completed?.[q.id]?.done;
+              const target = targetForLevel(q, level);
+              const effStreak = isCooldownActive ? 0 : streakDays;
+              const xp = xpForQuest(q, { level, streakDays: effStreak, settings, isBoss: false, modifiers: [] });
 
-            const cardCls = done
-              ? isDark
-                ? "border-emerald-900/40 bg-emerald-900/20"
-                : "border-emerald-200 bg-emerald-50"
-              : isDark
-              ? "border-zinc-800 bg-zinc-950/10"
-              : "border-zinc-200 bg-white";
+              const cardCls = done
+                ? isDark
+                  ? "border-emerald-900/40 bg-emerald-900/20"
+                  : "border-emerald-200 bg-emerald-50"
+                : isDark
+                ? "border-zinc-800 bg-zinc-950/10"
+                : "border-zinc-200 bg-white";
 
-            return (
-              <button
-                key={q.id}
-                onClick={() => toggleQuestDone(q.id)}
-                className={cx("w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className={cx("h-3 w-3 rounded-full", done ? "bg-emerald-500" : isDark ? "bg-zinc-700" : "bg-zinc-300")} />
-                      <div className="truncate text-sm font-extrabold">{q.name}</div>
-                      <Pill isDark={isDark}>{q.tier}</Pill>
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => toggleQuestDone(q.id)}
+                  className={cx("w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className={cx("h-3 w-3 rounded-full", done ? "bg-emerald-500" : isDark ? "bg-zinc-700" : "bg-zinc-300")} />
+                        <div className="truncate text-sm font-extrabold">{q.name}</div>
+                        <Pill isDark={isDark}>{q.tier}</Pill>
+                      </div>
+                      <div className={cx("mt-1 text-xs", textMuted)}>
+                        Target:{" "}
+                        <span className={cx("font-semibold", textSoft)}>
+                          {target}
+                          {q.kind === "distance" ? " km" : " reps"}
+                        </span>
+                        <span className="mx-2">•</span>
+                        Reward: <span className={cx("font-semibold", textSoft)}>{xp} XP</span>
+                      </div>
                     </div>
+                    <div className="shrink-0">
+                      <Pill tone={done ? "good" : "neutral"} isDark={isDark}>
+                        {done ? "Complete" : "Pending"}
+                      </Pill>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {boss ? (
+            <div className="mt-6">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-extrabold">Weekly Boss</div>
+                <Pill tone={bossDone ? "good" : "warn"} isDark={isDark}>
+                  {bossDone ? "Cleared" : "Available"}
+                </Pill>
+              </div>
+
+              <div
+                className={cx(
+                  "w-full rounded-2xl border p-3 text-left transition hover:shadow-sm",
+                  bossDone
+                    ? isDark
+                      ? "border-violet-900/40 bg-violet-900/20"
+                      : "border-violet-300 bg-violet-50"
+                    : isDark
+                    ? "border-zinc-800 bg-zinc-950/10"
+                    : "border-zinc-200 bg-white"
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-extrabold">{boss.name}</div>
+                    <div className={cx("mt-1 text-xs", textMuted)}>{boss.desc}</div>
                     <div className={cx("mt-1 text-xs", textMuted)}>
-                      Target:{" "}
-                      <span className={cx("font-semibold", textSoft)}>
-                        {target}
-                        {q.kind === "distance" ? " km" : " reps"}
-                      </span>
-                      <span className="mx-2">•</span>
-                      Reward: <span className={cx("font-semibold", textSoft)}>{xp} XP</span>
+                      Reward: <span className={cx("font-semibold", textSoft)}>High XP</span>
                     </div>
                   </div>
                   <div className="shrink-0">
-                    <Pill tone={done ? "good" : "neutral"} isDark={isDark}>
-                      {done ? "Complete" : "Pending"}
-                    </Pill>
+                    <Button onClick={toggleBossDone} variant={bossDone ? "outline" : "default"} isDark={isDark}>
+                      {bossDone ? "Undo" : "Claim"}
+                    </Button>
                   </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {boss ? (
-          <div className="mt-6">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-extrabold">Weekly Boss</div>
-              <Pill tone={bossDone ? "good" : "warn"} isDark={isDark}>
-                {bossDone ? "Cleared" : "Available"}
-              </Pill>
-            </div>
-
-            <div
-              className={cx(
-                "w-full rounded-2xl border p-3 text-left transition hover:shadow-sm",
-                bossDone
-                  ? isDark
-                    ? "border-violet-900/40 bg-violet-900/20"
-                    : "border-violet-300 bg-violet-50"
-                  : isDark
-                  ? "border-zinc-800 bg-zinc-950/10"
-                  : "border-zinc-200 bg-white"
-              )}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-extrabold">{boss.name}</div>
-                  <div className={cx("mt-1 text-xs", textMuted)}>{boss.desc}</div>
-                  <div className={cx("mt-1 text-xs", textMuted)}>
-                    Reward: <span className={cx("font-semibold", textSoft)}>High XP</span>
-                  </div>
-                </div>
-                <div className="shrink-0">
-                  <Button onClick={toggleBossDone} variant={bossDone ? "outline" : "default"} isDark={isDark}>
-                    {bossDone ? "Undo" : "Claim"}
-                  </Button>
                 </div>
               </div>
             </div>
-          </div>
-        ) : null}
-      </Card>
+          ) : null}
+        </Card>
+      </div>
 
       <div className="space-y-4">
         <Card className="p-4" border={border} surface={surface}>
@@ -1184,6 +1199,53 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
           </div>
 
           <div className={cx("rounded-2xl border p-4", border)}>
+            <div className="text-sm font-extrabold">Day Timer</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>Configure wake + bed times. (Shown on Today.)</div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <div className={cx("text-xs font-semibold", textMuted)}>Wake time</div>
+                <input
+                  type="time"
+                  value={settings.wakeTime}
+                  onChange={(e) =>
+                    setState((p) => ({
+                      ...p,
+                      settings: { ...p.settings, wakeTime: e.target.value },
+                    }))
+                  }
+                  className={cx(
+                    "mt-1 w-full rounded-xl border p-2 text-sm",
+                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                  )}
+                />
+              </div>
+
+              <div>
+                <div className={cx("text-xs font-semibold", textMuted)}>Bed time</div>
+                <input
+                  type="time"
+                  value={settings.bedTime}
+                  onChange={(e) =>
+                    setState((p) => ({
+                      ...p,
+                      settings: { ...p.settings, bedTime: e.target.value },
+                    }))
+                  }
+                  className={cx(
+                    "mt-1 w-full rounded-xl border p-2 text-sm",
+                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                  )}
+                />
+              </div>
+            </div>
+
+            <div className={cx("mt-2 text-xs", textMuted)}>
+              If bed time is earlier than wake time, it's treated as next day.
+            </div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-4", border)}>
             <div className="text-sm font-extrabold">Danger Zone</div>
             <div className={cx("mt-2 text-xs", textMuted)}>Reset wipes your progress and quests.</div>
             <div className="mt-3">
@@ -1217,7 +1279,12 @@ export default function LevelUpQuestBoard() {
   const [tab, setTab] = useState("today");
   const [state, setState] = useState(() => {
     const saved = safeJsonParse(localStorage.getItem(STORAGE_KEY) || "", null);
-    if (saved) return saved;
+    if (saved) {
+      return {
+        ...saved,
+        settings: { ...DEFAULT_SETTINGS, ...(saved.settings || {}) },
+      };
+    }
 
     const key = fmtDateKey(today());
     return {
