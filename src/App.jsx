@@ -140,6 +140,36 @@ const DEFAULT_SETTINGS = {
   bedTime: "23:00",
 };
 
+const DEFAULT_PROFILE = {
+  name: "",
+  dob: "",
+};
+
+const STARTER_TEMPLATES = {
+  body: [
+    { id: "body_pushups", name: "Push-ups", unitType: "reps", current: 10, s: 100 },
+    { id: "body_situps", name: "Sit-ups", unitType: "reps", current: 10, s: 80 },
+    { id: "body_pullups", name: "Pull-ups", unitType: "reps", current: 5, s: 20 },
+    { id: "body_run", name: "Running / Jogging", unitType: "distance", current: 1, s: 5 },
+  ],
+  mind: [
+    { id: "mind_meditation", name: "Meditation", unitType: "minutes", current: 5, s: 30 },
+    { id: "mind_focus", name: "No-Phone Focus", unitType: "minutes", current: 15, s: 60 },
+    { id: "mind_journaling", name: "Journaling", unitType: "minutes", current: 5, s: 20 },
+    { id: "mind_breathing", name: "Breathing", unitType: "minutes", current: 3, s: 15 },
+  ],
+  hobbies: [
+    { id: "hob_reading", name: "Reading", unitType: "minutes", current: 15, s: 60 },
+    { id: "hob_language", name: "Language Practice", unitType: "minutes", current: 15, s: 60 },
+    { id: "hob_art", name: "Art Practice", unitType: "minutes", current: 20, s: 90 },
+  ],
+  productivity: [
+    { id: "prod_study", name: "Studying", unitType: "minutes", current: 30, s: 120 },
+    { id: "prod_deepwork", name: "Deep Work Session", unitType: "minutes", current: 45, s: 180 },
+    { id: "prod_inbox", name: "Inbox Cleanup", unitType: "minutes", current: 10, s: 45 },
+  ],
+};
+
 const RANK_THRESHOLDS = [
   { rank: "E", min: 0.0, max: 0.19 },
   { rank: "D", min: 0.2, max: 0.39 },
@@ -288,6 +318,21 @@ function normalizeQuest(q) {
     priority,
     xp,
     createdAt,
+  };
+}
+
+function buildBaseState({ settings = DEFAULT_SETTINGS, quests = [], profile = DEFAULT_PROFILE, onboardingComplete = false } = {}) {
+  const key = fmtDateKey(today());
+  const totalXP = quests.reduce((sum, q) => sum + (q.xp || 0), 0);
+  return {
+    quests,
+    settings,
+    profile,
+    onboardingComplete,
+    days: { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "" } },
+    totalXP,
+    lastActiveDate: key,
+    cooldownUntil: null,
   };
 }
 
@@ -702,7 +747,7 @@ function BottomTabs({ tab, setTab, isDark }) {
   );
 }
 
-function Header({ overallRank, overallProgressPctDisplay, isDark, textMuted, resetAll, border, surface, setTab }) {
+function Header({ overallRank, isDark, textMuted, resetAll, border, surface, setTab }) {
   return (
     <div className="mb-6 flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1625,6 +1670,374 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
   );
 }
 
+function OnboardingWizard({ isDark, border, surface, textMuted, onComplete }) {
+  const [step, setStep] = useState(1);
+  const [profile, setProfile] = useState({ ...DEFAULT_PROFILE });
+  const [selectedCategories, setSelectedCategories] = useState(() => new Set());
+  const [selectedTasks, setSelectedTasks] = useState(() => new Set());
+  const [customTasks, setCustomTasks] = useState([]);
+  const [customInputs, setCustomInputs] = useState({});
+  const [taskConfigs, setTaskConfigs] = useState({});
+
+  const stepsTotal = 5;
+  const categories = [
+    { id: "body", label: "Body" },
+    { id: "mind", label: "Mind" },
+    { id: "hobbies", label: "Hobbies" },
+    { id: "productivity", label: "Productivity" },
+  ];
+
+  const selectedTaskList = useMemo(() => {
+    const tasks = [];
+    for (const cat of selectedCategories) {
+      const templates = STARTER_TEMPLATES[cat] || [];
+      for (const t of templates) {
+        if (selectedTasks.has(t.id)) tasks.push({ ...t, category: cat, isCustom: false });
+      }
+    }
+    for (const t of customTasks) {
+      if (selectedCategories.has(t.category) && selectedTasks.has(t.id)) tasks.push({ ...t, isCustom: true });
+    }
+    return tasks;
+  }, [selectedCategories, selectedTasks, customTasks]);
+
+  useEffect(() => {
+    setTaskConfigs((prev) => {
+      const next = { ...prev };
+      for (const t of selectedTaskList) {
+        if (!next[t.id]) {
+          next[t.id] = {
+            currentTargetValue: t.current,
+            sTargetValue: t.s,
+            unitType: t.unitType,
+          };
+        }
+      }
+      return next;
+    });
+  }, [selectedTaskList]);
+
+  const canProceed = useMemo(() => {
+    if (step === 2) return profile.name.trim() && profile.dob;
+    if (step === 3) return selectedCategories.size > 0;
+    if (step === 4) return selectedTaskList.length > 0;
+    if (step === 5) {
+      return selectedTaskList.every((t) => {
+        const cfg = taskConfigs[t.id];
+        return cfg && Number(cfg.currentTargetValue) > 0 && Number(cfg.sTargetValue) > 0;
+      });
+    }
+    return true;
+  }, [step, profile, selectedCategories, selectedTaskList, taskConfigs]);
+
+  function toggleCategory(id) {
+    setSelectedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleTask(id) {
+    setSelectedTasks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function addCustomTask(catId) {
+    const name = (customInputs[catId] || "").trim();
+    if (!name) return;
+    const unitType = catId === "body" ? "reps" : "minutes";
+    const id = `custom_${catId}_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 6)}`;
+    const task = {
+      id,
+      name,
+      category: catId,
+      unitType,
+      current: unitType === "distance" ? 1 : 5,
+      s: unitType === "distance" ? 5 : 30,
+    };
+    setCustomTasks((prev) => [...prev, task]);
+    setSelectedTasks((prev) => new Set(prev).add(id));
+    setCustomInputs((prev) => ({ ...prev, [catId]: "" }));
+  }
+
+  function handleNext() {
+    if (step < stepsTotal) {
+      setStep((s) => s + 1);
+      return;
+    }
+    const createdAt = Date.now();
+    const quests = selectedTaskList.map((t, idx) => {
+      const cfg = taskConfigs[t.id];
+      return normalizeQuest({
+        id: `q_${t.id}_${createdAt + idx}`,
+        name: t.name,
+        category: t.category,
+        unitType: cfg.unitType,
+        currentTargetValue: Number(cfg.currentTargetValue),
+        sTargetValue: Number(cfg.sTargetValue),
+        baselineValue: Number(cfg.currentTargetValue),
+        priority: "main",
+        xp: 0,
+        createdAt: createdAt + idx,
+      });
+    });
+    onComplete({ profile, quests });
+  }
+
+  function handleBack() {
+    if (step > 1) setStep((s) => s - 1);
+  }
+
+  return (
+    <div className={cx("min-h-screen", isDark ? "bg-zinc-950 text-zinc-50" : "bg-zinc-50 text-zinc-900")}>
+      <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-4 py-8">
+        <div className="flex items-center justify-between">
+          <div className={cx("text-xs font-semibold uppercase tracking-[0.2em]", textMuted)}>Onboarding</div>
+          <div className={cx("text-xs", textMuted)}>
+            Step {step} of {stepsTotal}
+          </div>
+        </div>
+
+        <div className="mt-2 flex gap-2">
+          {Array.from({ length: stepsTotal }).map((_, idx) => (
+            <div
+              key={idx}
+              className={cx(
+                "h-1.5 flex-1 rounded-full",
+                idx + 1 <= step ? (isDark ? "bg-zinc-100" : "bg-zinc-900") : isDark ? "bg-zinc-800" : "bg-zinc-200"
+              )}
+            />
+          ))}
+        </div>
+
+        <Card className="mt-6 p-5" border={border} surface={surface}>
+          {step === 1 ? (
+            <div className="space-y-3">
+              <div className="text-2xl font-black">Level Up</div>
+              <div className={cx("text-sm", textMuted)}>Turn habits into quests. Progress by leveling up.</div>
+            </div>
+          ) : null}
+
+          {step === 2 ? (
+            <div className="space-y-4">
+              <div className="text-lg font-extrabold">Player Info</div>
+              <div>
+                <div className={cx("text-xs font-semibold", textMuted)}>Player name</div>
+                <input
+                  value={profile.name}
+                  onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))}
+                  className={cx(
+                    "mt-1 w-full rounded-xl border p-3 text-sm",
+                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                  )}
+                  placeholder="Your name"
+                />
+              </div>
+              <div>
+                <div className={cx("text-xs font-semibold", textMuted)}>Date of birth</div>
+                <input
+                  type="date"
+                  value={profile.dob}
+                  onChange={(e) => setProfile((p) => ({ ...p, dob: e.target.value }))}
+                  className={cx(
+                    "mt-1 w-full rounded-xl border p-3 text-sm",
+                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                  )}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {step === 3 ? (
+            <div className="space-y-4">
+              <div className="text-lg font-extrabold">Choose Categories</div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {categories.map((cat) => {
+                  const active = selectedCategories.has(cat.id);
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => toggleCategory(cat.id)}
+                      className={cx(
+                        "rounded-2xl border p-4 text-left transition",
+                        active
+                          ? isDark
+                            ? "border-zinc-100 bg-zinc-900 text-zinc-50"
+                            : "border-zinc-900 bg-zinc-900 text-white"
+                          : isDark
+                          ? "border-zinc-800 bg-zinc-950/10"
+                          : "border-zinc-200 bg-white"
+                      )}
+                    >
+                      <div className="text-sm font-extrabold">{cat.label}</div>
+                      <div className={cx("mt-1 text-xs", active ? "text-zinc-200" : textMuted)}>Tap to toggle</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {step === 4 ? (
+            <div className="space-y-4">
+              <div className="text-lg font-extrabold">Choose Starter Tasks</div>
+              {Array.from(selectedCategories).map((catId) => {
+                const templates = STARTER_TEMPLATES[catId] || [];
+                return (
+                  <div key={catId} className="space-y-3">
+                    <div className={cx("text-xs font-bold uppercase tracking-[0.2em]", textMuted)}>{categoryLabel(catId)}</div>
+                    <div className="space-y-2">
+                      {templates.map((t) => (
+                        <label key={t.id} className={cx("flex items-center justify-between rounded-xl border px-3 py-2", border)}>
+                          <span className="text-sm font-semibold">{t.name}</span>
+                          <input type="checkbox" checked={selectedTasks.has(t.id)} onChange={() => toggleTask(t.id)} className="h-4 w-4" />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={customInputs[catId] || ""}
+                        onChange={(e) => setCustomInputs((p) => ({ ...p, [catId]: e.target.value }))}
+                        className={cx(
+                          "w-full rounded-xl border p-3 text-sm",
+                          isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                        )}
+                        placeholder="Add custom task"
+                      />
+                      <Button onClick={() => addCustomTask(catId)} isDark={isDark}>
+                        Add
+                      </Button>
+                    </div>
+                    {customTasks.filter((t) => t.category === catId).length ? (
+                      <div className="space-y-2">
+                        {customTasks
+                          .filter((t) => t.category === catId)
+                          .map((t) => (
+                            <label key={t.id} className={cx("flex items-center justify-between rounded-xl border px-3 py-2", border)}>
+                              <span className="text-sm font-semibold">{t.name}</span>
+                              <input type="checkbox" checked={selectedTasks.has(t.id)} onChange={() => toggleTask(t.id)} className="h-4 w-4" />
+                            </label>
+                          ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {step === 5 ? (
+            <div className="space-y-4">
+              <div className="text-lg font-extrabold">Configure Tasks</div>
+              {Array.from(selectedCategories).map((catId) => {
+                const tasks = selectedTaskList.filter((t) => t.category === catId);
+                if (!tasks.length) return null;
+                return (
+                  <div key={catId} className="space-y-3">
+                    <div className={cx("text-xs font-bold uppercase tracking-[0.2em]", textMuted)}>{categoryLabel(catId)}</div>
+                    <div className="space-y-3">
+                      {tasks.map((t) => {
+                        const cfg = taskConfigs[t.id] || {};
+                        const unitOptions = allowedKindsForCategory(catId);
+                        return (
+                          <div key={t.id} className={cx("rounded-2xl border p-3", border)}>
+                            <div className="text-sm font-extrabold">{t.name}</div>
+                            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                              <div>
+                                <div className={cx("text-xs font-semibold", textMuted)}>Current</div>
+                                <input
+                                  type="number"
+                                  step={cfg.unitType === "distance" ? "0.1" : "1"}
+                                  value={cfg.currentTargetValue ?? ""}
+                                  onChange={(e) =>
+                                    setTaskConfigs((p) => ({
+                                      ...p,
+                                      [t.id]: { ...p[t.id], currentTargetValue: Number(e.target.value) },
+                                    }))
+                                  }
+                                  className={cx(
+                                    "mt-1 w-full rounded-xl border p-2 text-sm",
+                                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                  )}
+                                />
+                              </div>
+                              <div>
+                                <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
+                                <input
+                                  type="number"
+                                  step={cfg.unitType === "distance" ? "0.1" : "1"}
+                                  value={cfg.sTargetValue ?? ""}
+                                  onChange={(e) =>
+                                    setTaskConfigs((p) => ({
+                                      ...p,
+                                      [t.id]: { ...p[t.id], sTargetValue: Number(e.target.value) },
+                                    }))
+                                  }
+                                  className={cx(
+                                    "mt-1 w-full rounded-xl border p-2 text-sm",
+                                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                  )}
+                                />
+                              </div>
+                              <div>
+                                <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
+                                <select
+                                  value={cfg.unitType || t.unitType}
+                                  onChange={(e) =>
+                                    setTaskConfigs((p) => ({
+                                      ...p,
+                                      [t.id]: { ...p[t.id], unitType: e.target.value },
+                                    }))
+                                  }
+                                  className={cx(
+                                    "mt-1 w-full rounded-xl border p-2 text-sm",
+                                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                  )}
+                                >
+                                  {unitOptions.map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt === "minutes" ? "Minutes" : opt === "distance" ? "Distance (km)" : "Reps"}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              <div className={cx("rounded-2xl border p-4 text-sm", border)}>
+                <div className="font-extrabold">Summary</div>
+                <div className={cx("mt-1 text-xs", textMuted)}>
+                  {profile.name || "Player"} • {selectedTaskList.length} tasks selected
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+
+        <div className="mt-6 flex items-center justify-between gap-3">
+          <Button variant="outline" onClick={handleBack} disabled={step === 1} isDark={isDark}>
+            Back
+          </Button>
+          <Button onClick={handleNext} disabled={!canProceed} isDark={isDark}>
+            {step === stepsTotal ? "Start" : "Next"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // -----------------------------
 // App
 // -----------------------------
@@ -1654,25 +2067,21 @@ export default function LevelUpQuestBoard() {
       const totalXP = quests.reduce((sum, q) => sum + (q.xp || 0), 0);
       const savedSettings = saved.settings || {};
       const themeMode = savedSettings.themeMode || savedSettings.theme || DEFAULT_SETTINGS.themeMode;
+      const profile = saved.profile || DEFAULT_PROFILE;
+      const onboardingComplete =
+        typeof saved.onboardingComplete === "boolean"
+          ? saved.onboardingComplete
+          : Boolean(profile?.name || (saved.quests && saved.quests.length));
       return {
         ...saved,
         quests,
         totalXP,
         settings: { ...DEFAULT_SETTINGS, ...savedSettings, themeMode },
+        profile,
+        onboardingComplete,
       };
     }
-
-    const key = fmtDateKey(today());
-    return {
-      quests: DEFAULT_QUESTS,
-      settings: DEFAULT_SETTINGS,
-      days: {
-        [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "" },
-      },
-      totalXP: 0,
-      lastActiveDate: key,
-      cooldownUntil: null,
-    };
+    return buildBaseState({ settings: DEFAULT_SETTINGS, quests: [], profile: DEFAULT_PROFILE, onboardingComplete: false });
   });
 
   const settings = state.settings;
@@ -1809,15 +2218,7 @@ export default function LevelUpQuestBoard() {
   }, [state.days, boss, bossKey]);
 
   function resetAll() {
-    const key = fmtDateKey(today());
-    setState({
-      quests: DEFAULT_QUESTS,
-      settings: DEFAULT_SETTINGS,
-      days: { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "" } },
-      totalXP: 0,
-      lastActiveDate: key,
-      cooldownUntil: null,
-    });
+    setState(buildBaseState({ settings: DEFAULT_SETTINGS, quests: [], profile: DEFAULT_PROFILE, onboardingComplete: false }));
     setTab("today");
   }
 
@@ -2049,11 +2450,25 @@ export default function LevelUpQuestBoard() {
   // -----------------------------
   // Render
   // -----------------------------
+  if (!state.onboardingComplete) {
+    return (
+      <OnboardingWizard
+        isDark={isDark}
+        border={border}
+        surface={surface}
+        textMuted={textMuted}
+        onComplete={({ profile, quests }) => {
+          setState(buildBaseState({ settings: state.settings, quests, profile, onboardingComplete: true }));
+          setTab("today");
+        }}
+      />
+    );
+  }
+
   return (
     <Shell page={page}>
       <Header
         overallRank={overallRank}
-        overallProgressPctDisplay={overallProgressPctDisplay}
         isDark={isDark}
         textMuted={textMuted}
         resetAll={resetAll}
