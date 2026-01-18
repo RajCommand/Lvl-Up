@@ -439,13 +439,13 @@ function DayModalContent({ dayKey, state, setState, isDark, border, textMuted })
 
 function Shell({ children, page }) {
   return (
-    <div className={cx("min-h-screen", page)}>
+    <div className={cx("min-h-screen pb-28", page)}>
       <div className="mx-auto max-w-6xl px-4 py-6">{children}</div>
     </div>
   );
 }
 
-function Tabs({ tab, setTab, isDark }) {
+function BottomTabs({ tab, setTab, isDark }) {
   const items = [
     { id: "today", label: "Today" },
     { id: "calendar", label: "Calendar" },
@@ -454,26 +454,34 @@ function Tabs({ tab, setTab, isDark }) {
     { id: "settings", label: "Settings" },
   ];
 
-  const tabBase = "rounded-xl px-3 py-2 text-sm font-semibold transition border";
+  const frameCls = isDark
+    ? "border-zinc-800 bg-zinc-900/80 text-zinc-100"
+    : "border-zinc-200 bg-white/80 text-zinc-900";
+  const activeCls = isDark ? "bg-zinc-100 text-zinc-900" : "bg-zinc-900 text-white";
+  const idleCls = isDark ? "text-zinc-300 hover:text-zinc-50" : "text-zinc-600 hover:text-zinc-900";
 
   return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((it) => {
-        const active = tab === it.id;
-        const cls = isDark
-          ? active
-            ? "bg-zinc-200 text-zinc-900 border-zinc-200"
-            : "bg-zinc-800 text-zinc-100 border-zinc-700 hover:bg-zinc-700"
-          : active
-          ? "bg-zinc-900 text-white border-zinc-900"
-          : "bg-white text-zinc-900 border-zinc-200 hover:bg-zinc-50";
-
-        return (
-          <button key={it.id} className={cx(tabBase, cls)} onClick={() => setTab(it.id)}>
-            {it.label}
-          </button>
-        );
-      })}
+    <div className="fixed inset-x-0 bottom-0 z-30 px-4 pb-[max(env(safe-area-inset-bottom),12px)]">
+      <div className={cx("mx-auto max-w-2xl rounded-2xl border p-2 shadow-2xl backdrop-blur", frameCls)}>
+        <div className="grid grid-cols-5 gap-2">
+          {items.map((it) => {
+            const active = tab === it.id;
+            return (
+              <button
+                key={it.id}
+                onClick={() => setTab(it.id)}
+                className={cx(
+                  "rounded-xl px-2 py-2 text-center text-[11px] font-semibold transition active:scale-[0.98]",
+                  active ? activeCls : idleCls
+                )}
+                aria-current={active ? "page" : undefined}
+              >
+                {it.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -536,13 +544,11 @@ function Header({
         </div>
       </Card>
 
-      <div className="flex items-center justify-between">
-        <Tabs tab={tab} setTab={setTab} isDark={isDark} />
-        <div className="hidden sm:block">
-          <Button variant="danger" onClick={resetAll} isDark={isDark}>
-            Reset
-          </Button>
-        </div>
+      <div className="hidden sm:flex items-center justify-between">
+        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">System</div>
+        <Button variant="danger" onClick={resetAll} isDark={isDark}>
+          Reset
+        </Button>
       </div>
     </div>
   );
@@ -1737,6 +1743,8 @@ export default function LevelUpQuestBoard() {
       <div className={cx("mt-8 text-center text-xs", isDark ? "text-zinc-500" : "text-zinc-500")}>
         Offline-first MVP • LocalStorage • Solo Leveling vibe
       </div>
+
+      <BottomTabs tab={tab} setTab={setTab} isDark={isDark} />
     </Shell>
   );
 }
