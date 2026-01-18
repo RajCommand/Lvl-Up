@@ -129,7 +129,7 @@ const DEFAULT_QUESTS = [
 ];
 
 const DEFAULT_SETTINGS = {
-  theme: "dark", // dark | light
+  themeMode: "system", // system | dark | light
   hardcore: false,
   penaltyMode: "xp_debt", // xp_debt | cooldown
   streakBonusPctPerDay: 1,
@@ -535,19 +535,79 @@ function DayModalContent({ dayKey, state, setState, isDark, border, textMuted })
 
 function Shell({ children, page }) {
   return (
-    <div className={cx("min-h-screen pb-28", page)}>
+    <div className={cx("min-h-screen pb-36", page)}>
       <div className="mx-auto max-w-6xl px-4 py-6">{children}</div>
     </div>
   );
 }
 
+function IconCheckCircle({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8.5 12.5l2.5 2.5 4.5-5" />
+    </svg>
+  );
+}
+
+function IconCalendar({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+    </svg>
+  );
+}
+
+function IconChart({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 20V6" />
+      <path d="M10 20V10" />
+      <path d="M16 20V4" />
+      <path d="M22 20H2" />
+    </svg>
+  );
+}
+
+function IconList({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 6h12" />
+      <path d="M9 12h12" />
+      <path d="M9 18h12" />
+      <circle cx="4" cy="6" r="1" />
+      <circle cx="4" cy="12" r="1" />
+      <circle cx="4" cy="18" r="1" />
+    </svg>
+  );
+}
+
+function IconGear({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-.4-1 1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1-.4 1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1V2.9a2 2 0 1 1 4 0V3a1.7 1.7 0 0 0 .4 1 1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.24.31.4.67.47 1.05a1.7 1.7 0 0 0 1.23.95h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.23.95c-.07.38-.23.74-.47 1.05Z" />
+    </svg>
+  );
+}
+
+function IconMoreVertical({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="5" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="19" r="1.5" />
+    </svg>
+  );
+}
+
 function BottomTabs({ tab, setTab, isDark }) {
   const items = [
-    { id: "today", label: "Today" },
-    { id: "calendar", label: "Calendar" },
-    { id: "quests", label: "Quests" },
-    { id: "stats", label: "Stats" },
-    { id: "settings", label: "Settings" },
+    { id: "today", label: "Today", Icon: IconCheckCircle },
+    { id: "calendar", label: "Calendar", Icon: IconCalendar },
+    { id: "quests", label: "Quests", Icon: IconList },
+    { id: "stats", label: "Stats", Icon: IconChart },
   ];
 
   const frameCls = isDark
@@ -558,21 +618,25 @@ function BottomTabs({ tab, setTab, isDark }) {
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 px-4 pb-[max(env(safe-area-inset-bottom),12px)]">
-      <div className={cx("mx-auto max-w-2xl rounded-2xl border p-2 shadow-2xl backdrop-blur", frameCls)}>
-        <div className="grid grid-cols-5 gap-2">
+      <div className={cx("mx-auto max-w-2xl rounded-2xl border px-2 py-3 shadow-2xl backdrop-blur", frameCls)}>
+        <div className="grid grid-cols-4 gap-2">
           {items.map((it) => {
             const active = tab === it.id;
+            const Icon = it.Icon;
             return (
               <button
                 key={it.id}
                 onClick={() => setTab(it.id)}
                 className={cx(
-                  "rounded-xl px-2 py-2 text-center text-[11px] font-semibold transition active:scale-[0.98]",
+                  "rounded-xl px-2 py-3 text-center text-sm font-semibold transition active:scale-[0.98]",
                   active ? activeCls : idleCls
                 )}
                 aria-current={active ? "page" : undefined}
               >
-                {it.label}
+                <div className="flex flex-col items-center gap-1.5">
+                  <Icon className={cx("h-6 w-6", active ? "opacity-100" : "opacity-80")} />
+                  <span className="leading-none">{it.label}</span>
+                </div>
               </button>
             );
           })}
@@ -582,45 +646,31 @@ function BottomTabs({ tab, setTab, isDark }) {
   );
 }
 
-function Header({
-  tab,
-  overallRank,
-  overallProgressPctDisplay,
-  isDark,
-  textMuted,
-  streakDays,
-  isCooldownActive,
-  toggleTheme,
-  setTab,
-  resetAll,
-  border,
-  surface,
-}) {
+function Header({ overallRank, overallProgressPctDisplay, isDark, textMuted, resetAll, border, surface, setTab }) {
   return (
     <div className="mb-6 flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-black tracking-tight">Level Up: Quest Board</h1>
+            <h1 className="text-2xl font-black tracking-tight">Level Up</h1>
             <Pill tone={overallRank === "S" || overallRank === "A" ? "good" : overallRank === "E" ? "warn" : "neutral"} isDark={isDark}>
               Rank {overallRank}
             </Pill>
           </div>
-          <div className={cx("mt-1 text-sm", textMuted)}>
-            Progress <span className="font-semibold">{overallProgressPctDisplay}%</span> • Streak{" "}
-            <span className="font-semibold">{streakDays}</span> day{streakDays === 1 ? "" : "s"}
-            {isCooldownActive ? <span className="ml-2 text-amber-500">• Cooldown active (bonus XP disabled)</span> : null}
-          </div>
+          <div className={cx("mt-1 text-sm", textMuted)}>Performance-based rank</div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={toggleTheme} isDark={isDark}>
-            {isDark ? "Light Mode" : "Dark Mode"}
-          </Button>
-          <Button variant="outline" onClick={() => setTab("today")} isDark={isDark}>
-            Go to Today
-          </Button>
-        </div>
+        <button
+          className={cx(
+            "inline-flex h-10 w-10 items-center justify-center rounded-full border transition",
+            isDark ? "border-zinc-800 bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200 bg-white hover:bg-zinc-50"
+          )}
+          onClick={() => setTab("settings")}
+          aria-label="Open settings"
+          title="Settings"
+        >
+          <IconGear className="h-5 w-5" />
+        </button>
       </div>
 
       <Card className="p-4" border={border} surface={surface}>
@@ -830,23 +880,6 @@ function TodayPanel({
       </div>
 
       <div className="space-y-4">
-        <Card className="p-4" border={border} surface={surface}>
-          <div className="text-sm font-extrabold">Penalty Mode</div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Button variant={settings.penaltyMode === "xp_debt" ? "default" : "outline"} onClick={() => setPenaltyMode("xp_debt")} isDark={isDark}>
-              XP Debt
-            </Button>
-            <Button variant={settings.penaltyMode === "cooldown" ? "default" : "outline"} onClick={() => setPenaltyMode("cooldown")} isDark={isDark}>
-              Cooldown
-            </Button>
-          </div>
-          <div className={cx("mt-2 text-xs", textMuted)}>
-            {settings.penaltyMode === "xp_debt"
-              ? "Missed days add XP debt that must be repaid before rewards apply."
-              : "Missed days trigger a 24h cooldown (bonus XP disabled)."}
-          </div>
-        </Card>
-
         <div className="sm:hidden">
           <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
             Reset
@@ -1312,7 +1345,7 @@ function StatsPanel({
   );
 }
 
-function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll, setWeeklyBossEnabled, setState }) {
+function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll, setWeeklyBossEnabled, setPenaltyMode, setState }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
@@ -1320,6 +1353,38 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
         <div className={cx("mt-1 text-sm", textMuted)}>This MVP is offline-first using LocalStorage.</div>
 
         <div className="mt-5 space-y-4">
+          <div className={cx("rounded-2xl border p-4", border)}>
+            <div className="text-sm font-extrabold">Theme</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>Choose system theme or a manual override.</div>
+            <div className="mt-3 space-y-2">
+              {[
+                { id: "system", label: "System", desc: "Theme based on system theme" },
+                { id: "light", label: "Light", desc: "Always light" },
+                { id: "dark", label: "Dark", desc: "Always dark" },
+              ].map((mode) => (
+                <label key={mode.id} className={cx("flex items-center justify-between rounded-xl border px-3 py-2", border)}>
+                  <div>
+                    <div className="text-sm font-semibold">{mode.label}</div>
+                    <div className={cx("text-[11px]", textMuted)}>{mode.desc}</div>
+                  </div>
+                  <input
+                    type="radio"
+                    name="themeMode"
+                    value={mode.id}
+                    checked={settings.themeMode === mode.id}
+                    onChange={(e) =>
+                      setState((p) => ({
+                        ...p,
+                        settings: { ...p.settings, themeMode: e.target.value },
+                      }))
+                    }
+                    className="h-4 w-4"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
           <div className={cx("rounded-2xl border p-4", border)}>
             <div className="flex items-center justify-between">
               <div>
@@ -1389,6 +1454,23 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
               </div>
             </div>
             <div className={cx("mt-2 text-xs", textMuted)}>Small multipliers keep progression hard (but rewarding).</div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-4", border)}>
+            <div className="text-sm font-extrabold">Penalty Mode</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant={settings.penaltyMode === "xp_debt" ? "default" : "outline"} onClick={() => setPenaltyMode("xp_debt")} isDark={isDark}>
+                XP Debt
+              </Button>
+              <Button variant={settings.penaltyMode === "cooldown" ? "default" : "outline"} onClick={() => setPenaltyMode("cooldown")} isDark={isDark}>
+                Cooldown
+              </Button>
+            </div>
+            <div className={cx("mt-2 text-xs", textMuted)}>
+              {settings.penaltyMode === "xp_debt"
+                ? "Missed days add XP debt that must be repaid before rewards apply."
+                : "Missed days trigger a 24h cooldown (bonus XP disabled)."}
+            </div>
           </div>
 
           <div className={cx("rounded-2xl border p-4", border)}>
@@ -1489,11 +1571,13 @@ export default function LevelUpQuestBoard() {
         return { ...q, xp: Math.min(xpCandidate, cap) };
       });
       const totalXP = quests.reduce((sum, q) => sum + (q.xp || 0), 0);
+      const savedSettings = saved.settings || {};
+      const themeMode = savedSettings.themeMode || savedSettings.theme || DEFAULT_SETTINGS.themeMode;
       return {
         ...saved,
         quests,
         totalXP,
-        settings: { ...DEFAULT_SETTINGS, ...(saved.settings || {}) },
+        settings: { ...DEFAULT_SETTINGS, ...savedSettings, themeMode },
       };
     }
 
@@ -1511,7 +1595,12 @@ export default function LevelUpQuestBoard() {
   });
 
   const settings = state.settings;
-  const isDark = settings.theme === "dark";
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return true;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  const isDark =
+    settings.themeMode === "dark" ? true : settings.themeMode === "light" ? false : systemPrefersDark;
   const dateKey = fmtDateKey(today());
 
   // Keep .dark class for external CSS compatibility
@@ -1520,6 +1609,18 @@ export default function LevelUpQuestBoard() {
     if (isDark) root.classList.add("dark");
     else root.classList.remove("dark");
   }, [isDark]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e) => setSystemPrefersDark(e.matches);
+    if (mql.addEventListener) mql.addEventListener("change", handler);
+    else mql.addListener(handler);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", handler);
+      else mql.removeListener(handler);
+    };
+  }, []);
 
   // Ensure today's entry exists + handle missed days penalties
   useEffect(() => {
@@ -1625,13 +1726,6 @@ export default function LevelUpQuestBoard() {
     const entry = state.days[bossKey];
     return !!entry?.completed?.[boss.id]?.done;
   }, [state.days, boss, bossKey]);
-
-  function toggleTheme() {
-    setState((prev) => ({
-      ...prev,
-      settings: { ...prev.settings, theme: prev.settings.theme === "dark" ? "light" : "dark" },
-    }));
-  }
 
   function resetAll() {
     const key = fmtDateKey(today());
@@ -1870,18 +1964,14 @@ export default function LevelUpQuestBoard() {
   return (
     <Shell page={page}>
       <Header
-        tab={tab}
         overallRank={overallRank}
         overallProgressPctDisplay={overallProgressPctDisplay}
         isDark={isDark}
         textMuted={textMuted}
-        streakDays={streakDays}
-        isCooldownActive={isCooldownActive}
-        toggleTheme={toggleTheme}
-        setTab={setTab}
         resetAll={resetAll}
         border={border}
         surface={surface}
+        setTab={setTab}
       />
 
       {tab === "today" ? (
@@ -1960,6 +2050,7 @@ export default function LevelUpQuestBoard() {
           textMuted={textMuted}
           resetAll={resetAll}
           setWeeklyBossEnabled={setWeeklyBossEnabled}
+          setPenaltyMode={setPenaltyMode}
           setState={setState}
         />
       ) : null}
