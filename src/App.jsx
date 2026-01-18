@@ -49,18 +49,6 @@ function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
 
-function levelFromXP(totalXP) {
-  let level = 1;
-  let xp = totalXP;
-  let req = 100;
-  while (xp >= req) {
-    xp -= req;
-    level += 1;
-    req = 100 + 25 * (level - 1);
-  }
-  return { level, xpIntoLevel: xp, nextReq: req };
-}
-
 function today() {
   return new Date();
 }
@@ -91,48 +79,52 @@ function monthMatrix(year, monthIndex) {
 }
 
 // -----------------------------
-// Default quests + scaling rules
+// Default quests + progression rules
 // -----------------------------
 const DEFAULT_QUESTS = [
   {
     id: "q_pushups",
     name: "Push-ups",
-    kind: "reps",
-    baseTarget: 10,
-    scaleEveryLevels: 3,
-    scaleAmount: 2,
-    baseXP: 30,
-    tier: "Main",
+    category: "body",
+    unitType: "reps",
+    currentTargetValue: 10,
+    sTargetValue: 100,
+    baselineValue: 10,
+    priority: "main",
+    xp: 0,
   },
   {
     id: "q_situps",
     name: "Sit-ups",
-    kind: "reps",
-    baseTarget: 10,
-    scaleEveryLevels: 3,
-    scaleAmount: 2,
-    baseXP: 30,
-    tier: "Main",
+    category: "body",
+    unitType: "reps",
+    currentTargetValue: 10,
+    sTargetValue: 80,
+    baselineValue: 10,
+    priority: "main",
+    xp: 0,
   },
   {
     id: "q_pullups",
     name: "Pull-ups",
-    kind: "reps",
-    baseTarget: 5,
-    scaleEveryLevels: 4,
-    scaleAmount: 1,
-    baseXP: 45,
-    tier: "Main",
+    category: "body",
+    unitType: "reps",
+    currentTargetValue: 5,
+    sTargetValue: 20,
+    baselineValue: 5,
+    priority: "main",
+    xp: 0,
   },
   {
     id: "q_run",
     name: "Run",
-    kind: "distance",
-    baseTarget: 1.0,
-    scaleEveryLevels: 2,
-    scaleAmount: 0.1,
-    baseXP: 60,
-    tier: "Main",
+    category: "body",
+    unitType: "distance",
+    currentTargetValue: 1.0,
+    sTargetValue: 5.0,
+    baselineValue: 1.0,
+    priority: "main",
+    xp: 0,
   },
 ];
 
@@ -147,37 +139,141 @@ const DEFAULT_SETTINGS = {
   bedTime: "23:00",
 };
 
-function targetForLevel(q, level) {
-  const bumps = Math.floor((level - 1) / q.scaleEveryLevels);
-  const raw = q.baseTarget + bumps * q.scaleAmount;
-  if (q.kind === "distance") return Math.max(0.5, Math.round(raw * 10) / 10);
-  return Math.max(1, Math.round(raw));
+const RANK_THRESHOLDS = [
+  { rank: "E", min: 0.0, max: 0.19 },
+  { rank: "D", min: 0.2, max: 0.39 },
+  { rank: "C", min: 0.4, max: 0.59 },
+  { rank: "B", min: 0.6, max: 0.74 },
+  { rank: "A", min: 0.75, max: 0.89 },
+  { rank: "S", min: 0.9, max: 1.0 },
+];
+
+const XP_CAPS_BY_RANK = {
+  E: 10000,
+  D: 25000,
+  C: 50000,
+  B: 90000,
+  A: 150000,
+  S: 250000,
+};
+
+const BASE_XP_BY_RANK = {
+  E: 40,
+  D: 60,
+  C: 85,
+  B: 115,
+  A: 150,
+  S: 200,
+};
+
+const PRIORITY_MULTIPLIER = {
+  main: 1.0,
+  minor: 0.6,
+};
+
+const IMPROVEMENT_BONUS_MULT = 1.5;
+
+const QUEST_CATEGORIES = ["body", "mind", "craft"];
+
+function normalizeQuestCategory(category) {
+  return QUEST_CATEGORIES.includes(category) ? category : "body";
 }
 
-function xpForQuest(q, opts) {
-  const { level, streakDays, settings, isBoss, modifiers = [] } = opts;
-
-  const tierMult = q.tier === "Main" ? 1.0 : 0.75;
-  const levelMult = 1 + Math.min(0.6, (level - 1) * 0.02);
-
-  const streakBonus = clamp(streakDays * settings.streakBonusPctPerDay, 0, settings.maxStreakBonusPct);
-  const streakMult = 1 + streakBonus / 100;
-
-  const modBonus = clamp(modifiers.length * 10, 0, 40);
-  const modMult = 1 + modBonus / 100;
-
-  const bossMult = isBoss ? 1.8 : 1.0;
-
-  return Math.round(q.baseXP * tierMult * levelMult * streakMult * modMult * bossMult);
+function normalizeUnitType(unitType) {
+  if (unitType === "time") return "minutes";
+  if (unitType === "minutes" || unitType === "reps" || unitType === "distance") return unitType;
+  return "reps";
 }
 
-function rankFromLevel(level) {
-  if (level >= 40) return "S";
-  if (level >= 30) return "A";
-  if (level >= 22) return "B";
-  if (level >= 15) return "C";
-  if (level >= 8) return "D";
-  return "E";
+function allowedKindsForCategory(category) {
+  if (category === "body") return ["reps", "distance", "minutes"];
+  return ["minutes"];
+}
+
+function categoryLabel(category) {
+  if (category === "mind") return "Mind";
+  if (category === "craft") return "Craft";
+  return "Body";
+}
+
+function unitLabel(kind) {
+  if (kind === "distance") return "km";
+  if (kind === "minutes") return "min";
+  return "reps";
+}
+
+function progressPct(currentTargetValue, sTargetValue) {
+  if (!sTargetValue || sTargetValue <= 0) return 0;
+  return clamp(currentTargetValue / sTargetValue, 0, 1);
+}
+
+function rankFromProgressPct(pct) {
+  const entry = RANK_THRESHOLDS.find((r) => pct >= r.min && pct <= r.max);
+  return entry ? entry.rank : "E";
+}
+
+function xpCapForRank(rank) {
+  return XP_CAPS_BY_RANK[rank] || XP_CAPS_BY_RANK.E;
+}
+
+function baseXPForRank(rank) {
+  return BASE_XP_BY_RANK[rank] || BASE_XP_BY_RANK.E;
+}
+
+function priorityMultiplier(priority) {
+  return PRIORITY_MULTIPLIER[priority] ?? PRIORITY_MULTIPLIER.main;
+}
+
+function defaultSTargetValue({ name, unitType, category }) {
+  const n = (name || "").toLowerCase();
+  if (unitType === "distance") {
+    if (n.includes("run")) return 5;
+    return category === "body" ? 3 : 2;
+  }
+  if (unitType === "minutes") {
+    if (n.includes("medit") || n.includes("mind")) return 30;
+    if (n.includes("read")) return 60;
+    if (n.includes("learn") || n.includes("study")) return 90;
+    return 45;
+  }
+  if (n.includes("pull")) return 20;
+  if (n.includes("push")) return 100;
+  if (n.includes("sit")) return 80;
+  return 50;
+}
+
+function normalizeQuest(q) {
+  const category = normalizeQuestCategory(q.category);
+  const unitType = normalizeUnitType(q.unitType || q.kind);
+  const allowed = allowedKindsForCategory(category);
+  const safeUnitType = allowed.includes(unitType) ? unitType : allowed[0];
+  const currentTargetRaw = Number(
+    q.currentTargetValue ?? q.baseTarget ?? q.target ?? (safeUnitType === "distance" ? 1 : 1)
+  );
+  const currentTargetValue = Number.isFinite(currentTargetRaw) ? currentTargetRaw : 1;
+  const sTargetRaw = Number(
+    q.sTargetValue ?? defaultSTargetValue({ name: q.name, unitType: safeUnitType, category })
+  );
+  const sTargetValue = Number.isFinite(sTargetRaw) && sTargetRaw > 0 ? sTargetRaw : defaultSTargetValue({ name: q.name, unitType: safeUnitType, category });
+  const baselineRaw = Number(q.lastTargetValue ?? q.baselineValue ?? currentTargetValue);
+  const baselineValue = Number.isFinite(baselineRaw) ? baselineRaw : currentTargetValue;
+  const rawPriority = String(q.priority || (q.tier === "Side" ? "minor" : "main")).toLowerCase();
+  const priority = rawPriority === "minor" ? "minor" : "main";
+  const xpRaw = Number(q.xp ?? 0);
+  const pct = progressPct(currentTargetValue, sTargetValue);
+  const rank = rankFromProgressPct(pct);
+  const cap = xpCapForRank(rank);
+  const xp = Number.isFinite(xpRaw) ? Math.min(xpRaw, cap) : 0;
+  return {
+    ...q,
+    category,
+    unitType: safeUnitType,
+    currentTargetValue,
+    sTargetValue,
+    baselineValue,
+    priority,
+    xp,
+  };
 }
 
 // -----------------------------
@@ -379,7 +475,7 @@ function DayModalContent({ dayKey, state, setState, isDark, border, textMuted })
         >
           <div className="font-extrabold">XP Debt</div>
           <div className="mt-1 text-xs">
-            <span className="font-bold">{entry.xpDebt}</span> XP must be repaid before XP counts toward leveling.
+            <span className="font-bold">{entry.xpDebt}</span> XP must be repaid before rewards apply.
           </div>
         </div>
       ) : null}
@@ -488,18 +584,15 @@ function BottomTabs({ tab, setTab, isDark }) {
 
 function Header({
   tab,
-  rank,
+  overallRank,
+  overallProgressPctDisplay,
   isDark,
   textMuted,
-  textSoft,
-  level,
   streakDays,
   isCooldownActive,
   toggleTheme,
   setTab,
   resetAll,
-  xpIntoLevel,
-  nextReq,
   border,
   surface,
 }) {
@@ -509,13 +602,13 @@ function Header({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-black tracking-tight">Level Up: Quest Board</h1>
-            <Pill tone={rank === "S" || rank === "A" ? "good" : rank === "E" ? "warn" : "neutral"} isDark={isDark}>
-              Rank {rank}
+            <Pill tone={overallRank === "S" || overallRank === "A" ? "good" : overallRank === "E" ? "warn" : "neutral"} isDark={isDark}>
+              Rank {overallRank}
             </Pill>
           </div>
           <div className={cx("mt-1 text-sm", textMuted)}>
-            Level <span className={cx("font-semibold", textSoft)}>{level}</span> • Streak{" "}
-            <span className={cx("font-semibold", textSoft)}>{streakDays}</span> day{streakDays === 1 ? "" : "s"}
+            Progress <span className="font-semibold">{overallProgressPctDisplay}%</span> • Streak{" "}
+            <span className="font-semibold">{streakDays}</span> day{streakDays === 1 ? "" : "s"}
             {isCooldownActive ? <span className="ml-2 text-amber-500">• Cooldown active (bonus XP disabled)</span> : null}
           </div>
         </div>
@@ -533,13 +626,11 @@ function Header({
       <Card className="p-4" border={border} surface={surface}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <div className={cx("text-sm font-semibold", textSoft)}>XP Progress</div>
-            <div className={cx("mt-1 text-sm", textMuted)}>
-              {xpIntoLevel} / {nextReq} XP to next level
-            </div>
+            <div className="text-sm font-semibold">Performance Progress</div>
+            <div className={cx("mt-1 text-sm", textMuted)}>{overallProgressPctDisplay}% toward S benchmarks</div>
           </div>
           <div className="w-full sm:w-1/2">
-            <ProgressBar value={xpIntoLevel} max={nextReq} isDark={isDark} />
+            <ProgressBar value={overallProgressPctDisplay} max={100} isDark={isDark} />
           </div>
         </div>
       </Card>
@@ -557,16 +648,11 @@ function Header({
 function TodayPanel({
   state,
   todays,
-  level,
-  streakDays,
-  isCooldownActive,
   settings,
-  stats,
   boss,
   bossDone,
   toggleQuestDone,
   toggleBossDone,
-  setHardcore,
   setPenaltyMode,
   resetAll,
   isDark,
@@ -580,6 +666,11 @@ function TodayPanel({
   const percent = total ? Math.round((doneCount / total) * 100) : 0;
 
   const debt = todays.xpDebt || 0;
+  const categories = [
+    { id: "body", label: "Body" },
+    { id: "mind", label: "Mind" },
+    { id: "craft", label: "Craft" },
+  ];
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -615,55 +706,84 @@ function TodayPanel({
               )}
             >
               <div className="font-semibold">XP Debt:</div>
-              <div>{debt} XP must be repaid before XP counts toward leveling up.</div>
+              <div>{debt} XP must be repaid before rewards apply.</div>
             </div>
           ) : null}
 
-          <div className="mt-4 space-y-2">
-            {state.quests.map((q) => {
-              const done = !!todays.completed?.[q.id]?.done;
-              const target = targetForLevel(q, level);
-              const effStreak = isCooldownActive ? 0 : streakDays;
-              const xp = xpForQuest(q, { level, streakDays: effStreak, settings, isBoss: false, modifiers: [] });
-
-              const cardCls = done
-                ? isDark
-                  ? "border-emerald-900/40 bg-emerald-900/20"
-                  : "border-emerald-200 bg-emerald-50"
-                : isDark
-                ? "border-zinc-800 bg-zinc-950/10"
-                : "border-zinc-200 bg-white";
-
+          <div className="mt-4 space-y-4">
+            {categories.map((cat) => {
+              const quests = state.quests.filter((q) => q.category === cat.id);
+              if (!quests.length) return null;
               return (
-                <button
-                  key={q.id}
-                  onClick={() => toggleQuestDone(q.id)}
-                  className={cx("w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className={cx("h-3 w-3 rounded-full", done ? "bg-emerald-500" : isDark ? "bg-zinc-700" : "bg-zinc-300")} />
-                        <div className="truncate text-sm font-extrabold">{q.name}</div>
-                        <Pill isDark={isDark}>{q.tier}</Pill>
-                      </div>
-                      <div className={cx("mt-1 text-xs", textMuted)}>
-                        Target:{" "}
-                        <span className={cx("font-semibold", textSoft)}>
-                          {target}
-                          {q.kind === "distance" ? " km" : " reps"}
-                        </span>
-                        <span className="mx-2">•</span>
-                        Reward: <span className={cx("font-semibold", textSoft)}>{xp} XP</span>
-                      </div>
-                    </div>
-                    <div className="shrink-0">
-                      <Pill tone={done ? "good" : "neutral"} isDark={isDark}>
-                        {done ? "Complete" : "Pending"}
-                      </Pill>
-                    </div>
-                  </div>
-                </button>
+                <div key={cat.id} className="space-y-2">
+                  <div className={cx("text-xs font-bold uppercase tracking-[0.2em]", textMuted)}>{cat.label}</div>
+                  {quests.map((q) => {
+                    const done = !!todays.completed?.[q.id]?.done;
+                    const target = q.currentTargetValue;
+                    const pct = progressPct(q.currentTargetValue, q.sTargetValue);
+                    const rank = rankFromProgressPct(pct);
+                    const cap = xpCapForRank(rank);
+                    const baseXP = baseXPForRank(rank);
+                    const improvement = q.currentTargetValue > q.baselineValue;
+                    const improvementXP = improvement ? Math.round(baseXP * IMPROVEMENT_BONUS_MULT) : 0;
+                    const rawAward = Math.round((baseXP + improvementXP) * priorityMultiplier(q.priority));
+                    const remaining = Math.max(0, cap - (q.xp || 0));
+                    const award = Math.max(0, Math.min(rawAward, remaining));
+                    const isCapped = remaining <= 0;
+
+                    const cardCls = done
+                      ? isDark
+                        ? "border-emerald-900/40 bg-emerald-900/20"
+                        : "border-emerald-200 bg-emerald-50"
+                      : isDark
+                      ? "border-zinc-800 bg-zinc-950/10"
+                      : "border-zinc-200 bg-white";
+
+                    return (
+                      <button
+                        key={q.id}
+                        onClick={() => toggleQuestDone(q.id)}
+                        className={cx("w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <div className={cx("h-3 w-3 rounded-full", done ? "bg-emerald-500" : isDark ? "bg-zinc-700" : "bg-zinc-300")} />
+                              <div className="truncate text-sm font-extrabold">{q.name}</div>
+                              <Pill tone={rank === "S" || rank === "A" ? "good" : rank === "E" ? "warn" : "neutral"} isDark={isDark}>
+                                Rank {rank}
+                              </Pill>
+                              <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Main"}</Pill>
+                            </div>
+                            <div className={cx("mt-1 text-xs", textMuted)}>
+                              Target:{" "}
+                              <span className={cx("font-semibold", textSoft)}>
+                                {target} / {q.sTargetValue} {unitLabel(q.unitType)}
+                              </span>
+                              <span className="mx-2">•</span>
+                              Progress: <span className={cx("font-semibold", textSoft)}>{Math.round(pct * 100)}%</span>
+                            </div>
+                            <div className={cx("mt-1 text-xs", textMuted)}>
+                              XP: <span className={cx("font-semibold", textSoft)}>{q.xp || 0} / {cap}</span>
+                              <span className="mx-2">•</span>
+                              Next clear: <span className={cx("font-semibold", textSoft)}>{award} XP</span>
+                            </div>
+                            {isCapped ? (
+                              <div className={cx("mt-1 text-[11px]", isDark ? "text-amber-300" : "text-amber-700")}>
+                                XP capped - increase your target to rank up.
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="shrink-0">
+                            <Pill tone={done ? "good" : "neutral"} isDark={isDark}>
+                              {done ? "Complete" : "Pending"}
+                            </Pill>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
           </div>
@@ -711,54 +831,19 @@ function TodayPanel({
 
       <div className="space-y-4">
         <Card className="p-4" border={border} surface={surface}>
-          <div className="text-sm font-extrabold">System Status</div>
-          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Total XP</div>
-              <div className="mt-1 text-lg font-black">{state.totalXP}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Today XP</div>
-              <div className="mt-1 text-lg font-black">{todays.earnedXP || 0}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Compliance (30d)</div>
-              <div className="mt-1 text-lg font-black">{stats.compliance}%</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Avg XP (active)</div>
-              <div className="mt-1 text-lg font-black">{stats.avgXP}</div>
-            </div>
+          <div className="text-sm font-extrabold">Penalty Mode</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button variant={settings.penaltyMode === "xp_debt" ? "default" : "outline"} onClick={() => setPenaltyMode("xp_debt")} isDark={isDark}>
+              XP Debt
+            </Button>
+            <Button variant={settings.penaltyMode === "cooldown" ? "default" : "outline"} onClick={() => setPenaltyMode("cooldown")} isDark={isDark}>
+              Cooldown
+            </Button>
           </div>
-        </Card>
-
-        <Card className="p-4" border={border} surface={surface}>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-extrabold">Hardcore Mode</div>
-              <div className={cx("mt-1 text-xs", textMuted)}>Increases stakes (you can expand this later).</div>
-            </div>
-            <label className="inline-flex cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={settings.hardcore} onChange={(e) => setHardcore(e.target.checked)} className="h-4 w-4" />
-              <span className="text-sm font-semibold">{settings.hardcore ? "On" : "Off"}</span>
-            </label>
-          </div>
-
-          <div className="mt-4">
-            <div className={cx("text-xs font-semibold", textMuted)}>Penalty Mode</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button variant={settings.penaltyMode === "xp_debt" ? "default" : "outline"} onClick={() => setPenaltyMode("xp_debt")} isDark={isDark}>
-                XP Debt
-              </Button>
-              <Button variant={settings.penaltyMode === "cooldown" ? "default" : "outline"} onClick={() => setPenaltyMode("cooldown")} isDark={isDark}>
-                Cooldown
-              </Button>
-            </div>
-            <div className={cx("mt-2 text-xs", textMuted)}>
-              {settings.penaltyMode === "xp_debt"
-                ? "Missed days add XP debt that must be repaid before leveling counts."
-                : "Missed days trigger a 24h cooldown (bonus XP disabled)."}
-            </div>
+          <div className={cx("mt-2 text-xs", textMuted)}>
+            {settings.penaltyMode === "xp_debt"
+              ? "Missed days add XP debt that must be repaid before rewards apply."
+              : "Missed days trigger a 24h cooldown (bonus XP disabled)."}
           </div>
         </Card>
 
@@ -922,28 +1007,70 @@ function CalendarPanel({
   );
 }
 
-function QuestsPanel({ state, level, textMuted, textSoft, isDark, border, surface, updateQuest, addQuest, deleteQuest }) {
+function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, updateQuest, addQuest, deleteQuest }) {
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const filterOptions = ["all", ...QUEST_CATEGORIES];
+
+  const filteredQuests =
+    categoryFilter === "all" ? state.quests : state.quests.filter((q) => q.category === categoryFilter);
+
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-lg font-extrabold">Quest Editor</div>
-            <div className={cx("mt-1 text-sm", textMuted)}>Edit base targets and scaling. Your current level affects today’s target.</div>
+            <div className={cx("mt-1 text-sm", textMuted)}>Define targets, S-rank benchmarks, and priority for XP.</div>
           </div>
           <Button onClick={addQuest} isDark={isDark}>
             Add Quest
           </Button>
         </div>
 
+        <div className="mt-3 flex flex-wrap gap-2">
+          {filterOptions.map((opt) => {
+            const active = categoryFilter === opt;
+            return (
+              <Button
+                key={opt}
+                variant={active ? "default" : "outline"}
+                onClick={() => setCategoryFilter(opt)}
+                isDark={isDark}
+              >
+                {opt === "all" ? "All" : categoryLabel(opt)}
+              </Button>
+            );
+          })}
+        </div>
+
         <div className="mt-4 space-y-3">
-          {state.quests.map((q) => {
-            const target = targetForLevel(q, level);
+          {filteredQuests.map((q) => {
+            const target = q.currentTargetValue;
+            const allowedKinds = allowedKindsForCategory(q.category);
             return (
               <div key={q.id} className={cx("rounded-2xl border p-3", border)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={q.category}
+                        onChange={(e) => {
+                          const nextCategory = normalizeQuestCategory(e.target.value);
+                          const nextAllowed = allowedKindsForCategory(nextCategory);
+                          const nextUnitType = nextAllowed.includes(q.unitType) ? q.unitType : nextAllowed[0];
+                          updateQuest(q.id, { category: nextCategory, unitType: nextUnitType });
+                        }}
+                        className={cx(
+                          "rounded-lg border px-2 py-1 text-xs font-semibold uppercase tracking-[0.12em]",
+                          isDark ? "border-zinc-800 bg-zinc-950/10 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+                        )}
+                      >
+                        {QUEST_CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {categoryLabel(cat)}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         value={q.name}
                         onChange={(e) => updateQuest(q.id, { name: e.target.value })}
@@ -952,10 +1079,9 @@ function QuestsPanel({ state, level, textMuted, textSoft, isDark, border, surfac
                           isDark ? "border-zinc-800 bg-zinc-950/10 focus:ring-zinc-100" : "border-zinc-200 bg-white focus:ring-zinc-900"
                         )}
                       />
-                      <Pill isDark={isDark}>{q.tier}</Pill>
                     </div>
                     <div className={cx("mt-1 text-xs", textMuted)}>
-                      Current target at Level {level}: <span className={cx("font-bold", textSoft)}>{target}{q.kind === "distance" ? " km" : " reps"}</span>
+                      Current target: <span className={cx("font-bold", textSoft)}>{target} {unitLabel(q.unitType)}</span>
                     </div>
                   </div>
                   <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
@@ -965,70 +1091,55 @@ function QuestsPanel({ state, level, textMuted, textSoft, isDark, border, surfac
 
                 <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Type</div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
                     <select
-                      value={q.kind}
-                      onChange={(e) => updateQuest(q.id, { kind: e.target.value })}
+                      value={q.unitType}
+                      onChange={(e) => updateQuest(q.id, { unitType: normalizeUnitType(e.target.value) })}
                       className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
                     >
-                      <option value="reps">Reps</option>
-                      <option value="distance">Distance (km)</option>
-                      <option value="time">Time (min)</option>
+                      {allowedKinds.includes("reps") ? <option value="reps">Reps</option> : null}
+                      {allowedKinds.includes("distance") ? <option value="distance">Distance (km)</option> : null}
+                      {allowedKinds.includes("minutes") ? <option value="minutes">Minutes</option> : null}
                     </select>
                   </div>
 
                   <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Tier</div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Priority</div>
                     <select
-                      value={q.tier}
-                      onChange={(e) => updateQuest(q.id, { tier: e.target.value })}
+                      value={q.priority}
+                      onChange={(e) => updateQuest(q.id, { priority: e.target.value })}
                       className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
                     >
-                      <option value="Main">Main</option>
-                      <option value="Side">Side</option>
+                      <option value="main">Main</option>
+                      <option value="minor">Minor</option>
                     </select>
                   </div>
 
                   <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Base Target</div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Current Target</div>
                     <input
                       type="number"
-                      step={q.kind === "distance" ? "0.1" : "1"}
-                      value={q.baseTarget}
-                      onChange={(e) => updateQuest(q.id, { baseTarget: Number(e.target.value) })}
+                      step={q.unitType === "distance" ? "0.1" : "1"}
+                      value={q.currentTargetValue}
+                      onChange={(e) => updateQuest(q.id, { currentTargetValue: Number(e.target.value) })}
                       className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
                     />
                   </div>
 
                   <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Base XP</div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
                     <input
                       type="number"
-                      value={q.baseXP}
-                      onChange={(e) => updateQuest(q.id, { baseXP: Number(e.target.value) })}
+                      step={q.unitType === "distance" ? "0.1" : "1"}
+                      value={q.sTargetValue}
+                      onChange={(e) => updateQuest(q.id, { sTargetValue: Number(e.target.value) })}
                       className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
                     />
                   </div>
 
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Scale Every (Levels)</div>
-                    <input
-                      type="number"
-                      value={q.scaleEveryLevels}
-                      onChange={(e) => updateQuest(q.id, { scaleEveryLevels: Math.max(1, Number(e.target.value)) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Scale Amount</div>
-                    <input
-                      type="number"
-                      step={q.kind === "distance" ? "0.1" : "1"}
-                      value={q.scaleAmount}
-                      onChange={(e) => updateQuest(q.id, { scaleAmount: Number(e.target.value) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
+                  <div className={cx("rounded-xl border p-3 text-xs", border)}>
+                    <div className={cx("text-[11px] font-semibold", textMuted)}>Baseline</div>
+                    <div className="mt-1 text-sm font-black">{q.baselineValue} {unitLabel(q.unitType)}</div>
                   </div>
                 </div>
               </div>
@@ -1038,16 +1149,14 @@ function QuestsPanel({ state, level, textMuted, textSoft, isDark, border, surfac
       </Card>
 
       <Card className="p-4" border={border} surface={surface}>
-        <div className="text-sm font-extrabold">How scaling works</div>
-        <div className={cx("mt-2 text-sm", textMuted)}>Each quest increases its target every N levels by a fixed amount.</div>
+        <div className="text-sm font-extrabold">How progression works</div>
+        <div className={cx("mt-2 text-sm", textMuted)}>Rank is based on how close your current target is to your S target.</div>
         <div className={cx("mt-4 rounded-xl border p-3 text-xs", border, textSoft)}>
-          Example: base 10 pushups, scaleEvery=3, scaleAmount=2
+          Example: 20 pushups current, 100 pushups S target
           <div className="mt-2">
-            Level 1–2: 10
+            Progress: 20% (Rank D)
             <br />
-            Level 3–5: 12
-            <br />
-            Level 6–8: 14
+            Increase current target to move up ranks
           </div>
         </div>
       </Card>
@@ -1055,12 +1164,29 @@ function QuestsPanel({ state, level, textMuted, textSoft, isDark, border, surfac
   );
 }
 
-function StatsPanel({ dateKey, state, stats, level, rank, streakDays, isDark, border, surface, textMuted, textSoft, setTab, resetAll }) {
+function StatsPanel({
+  dateKey,
+  state,
+  stats,
+  overallRank,
+  overallLevel,
+  streakDays,
+  isDark,
+  border,
+  surface,
+  textMuted,
+  setTab,
+  resetAll,
+}) {
   const keys = Object.keys(state.days).filter((k) => k <= dateKey).sort();
   const last7 = keys.slice(-7);
 
   const bars = last7.map((k) => ({ key: k, xp: state.days[k]?.earnedXP || 0 }));
   const maxXP = Math.max(1, ...bars.map((b) => b.xp));
+  const categoryProgress = QUEST_CATEGORIES.map((cat) => {
+    const info = stats.categoryProgress?.[cat] || { progressPct: 0, rank: "E" };
+    return { cat, ...info };
+  });
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -1087,12 +1213,12 @@ function StatsPanel({ dateKey, state, stats, level, rank, streakDays, isDark, bo
 
         <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className={cx("rounded-xl border p-3", border)}>
-            <div className={cx("text-xs", textMuted)}>Level</div>
-            <div className="mt-1 text-lg font-black">{level}</div>
+            <div className={cx("text-xs", textMuted)}>Overall Rank</div>
+            <div className="mt-1 text-lg font-black">{overallRank}</div>
           </div>
           <div className={cx("rounded-xl border p-3", border)}>
-            <div className={cx("text-xs", textMuted)}>Rank</div>
-            <div className="mt-1 text-lg font-black">{rank}</div>
+            <div className={cx("text-xs", textMuted)}>Overall Level</div>
+            <div className="mt-1 text-lg font-black">{overallLevel}</div>
           </div>
           <div className={cx("rounded-xl border p-3", border)}>
             <div className={cx("text-xs", textMuted)}>Streak</div>
@@ -1130,20 +1256,58 @@ function StatsPanel({ dateKey, state, stats, level, rank, streakDays, isDark, bo
         </div>
       </Card>
 
-      <Card className="p-4" border={border} surface={surface}>
-        <div className="text-sm font-extrabold">Actions</div>
-        <div className="mt-3 space-y-2">
-          <Button variant="outline" onClick={() => setTab("calendar")} className="w-full" isDark={isDark}>
-            Open Calendar
-          </Button>
-          <Button variant="outline" onClick={() => setTab("quests")} className="w-full" isDark={isDark}>
-            Edit Quests
-          </Button>
-          <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
-            Hard Reset
-          </Button>
-        </div>
-      </Card>
+      <div className="space-y-4">
+        <Card className="p-4" border={border} surface={surface}>
+          <div className="text-sm font-extrabold">System Status</div>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Total XP</div>
+              <div className="mt-1 text-lg font-black">{state.totalXP}</div>
+            </div>
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Today XP</div>
+              <div className="mt-1 text-lg font-black">{state.days[dateKey]?.earnedXP || 0}</div>
+            </div>
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Compliance (30d)</div>
+              <div className="mt-1 text-lg font-black">{stats.compliance}%</div>
+            </div>
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Avg XP (active)</div>
+              <div className="mt-1 text-lg font-black">{stats.avgXP}</div>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {categoryProgress.map((cat) => (
+              <div key={cat.cat} className={cx("rounded-xl border p-3", border)}>
+                <div className="flex items-center justify-between">
+              <div className={cx("text-xs font-semibold", textMuted)}>{categoryLabel(cat.cat)} Rank</div>
+              <div className="text-xs font-bold">Rank {cat.rank}</div>
+            </div>
+            <div className="mt-2 text-xs font-semibold">{Math.round(cat.progressPct * 100)}% toward S</div>
+            <div className="mt-2">
+              <ProgressBar value={Math.round(cat.progressPct * 100)} max={100} isDark={isDark} />
+            </div>
+          </div>
+        ))}
+          </div>
+        </Card>
+
+        <Card className="p-4" border={border} surface={surface}>
+          <div className="text-sm font-extrabold">Actions</div>
+          <div className="mt-3 space-y-2">
+            <Button variant="outline" onClick={() => setTab("calendar")} className="w-full" isDark={isDark}>
+              Open Calendar
+            </Button>
+            <Button variant="outline" onClick={() => setTab("quests")} className="w-full" isDark={isDark}>
+              Edit Quests
+            </Button>
+            <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
+              Hard Reset
+            </Button>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -1165,6 +1329,29 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
               <label className="inline-flex cursor-pointer items-center gap-2">
                 <input type="checkbox" checked={settings.weeklyBossEnabled} onChange={(e) => setWeeklyBossEnabled(e.target.checked)} className="h-4 w-4" />
                 <span className="text-sm font-semibold">{settings.weeklyBossEnabled ? "On" : "Off"}</span>
+              </label>
+            </div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-4", border)}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-extrabold">Hardcore Mode</div>
+                <div className={cx("mt-1 text-xs", textMuted)}>Increases stakes (you can expand this later).</div>
+              </div>
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.hardcore}
+                  onChange={(e) =>
+                    setState((p) => ({
+                      ...p,
+                      settings: { ...p.settings, hardcore: e.target.checked },
+                    }))
+                  }
+                  className="h-4 w-4"
+                />
+                <span className="text-sm font-semibold">{settings.hardcore ? "On" : "Off"}</span>
               </label>
             </div>
           </div>
@@ -1201,7 +1388,7 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
                 />
               </div>
             </div>
-            <div className={cx("mt-2 text-xs", textMuted)}>Small multipliers keep leveling hard (but rewarding).</div>
+            <div className={cx("mt-2 text-xs", textMuted)}>Small multipliers keep progression hard (but rewarding).</div>
           </div>
 
           <div className={cx("rounded-2xl border p-4", border)}>
@@ -1286,8 +1473,26 @@ export default function LevelUpQuestBoard() {
   const [state, setState] = useState(() => {
     const saved = safeJsonParse(localStorage.getItem(STORAGE_KEY) || "", null);
     if (saved) {
+      const normalizedQuests = (saved.quests || DEFAULT_QUESTS).map(normalizeQuest);
+      const xpFromDays = {};
+      for (const entry of Object.values(saved.days || {})) {
+        if (!entry?.completed) continue;
+        for (const [questId, info] of Object.entries(entry.completed)) {
+          if (typeof info?.xp !== "number") continue;
+          xpFromDays[questId] = (xpFromDays[questId] || 0) + info.xp;
+        }
+      }
+      const quests = normalizedQuests.map((q) => {
+        const xpCandidate = q.xp ? q.xp : xpFromDays[q.id] || 0;
+        const pct = progressPct(q.currentTargetValue, q.sTargetValue);
+        const cap = xpCapForRank(rankFromProgressPct(pct));
+        return { ...q, xp: Math.min(xpCandidate, cap) };
+      });
+      const totalXP = quests.reduce((sum, q) => sum + (q.xp || 0), 0);
       return {
         ...saved,
+        quests,
+        totalXP,
         settings: { ...DEFAULT_SETTINGS, ...(saved.settings || {}) },
       };
     }
@@ -1359,8 +1564,14 @@ export default function LevelUpQuestBoard() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
-  const { level, xpIntoLevel, nextReq } = useMemo(() => levelFromXP(state.totalXP), [state.totalXP]);
-  const rank = useMemo(() => rankFromLevel(level), [level]);
+  const overallProgressPct = useMemo(() => {
+    if (!state.quests.length) return 0;
+    const sum = state.quests.reduce((acc, q) => acc + progressPct(q.currentTargetValue, q.sTargetValue), 0);
+    return sum / state.quests.length;
+  }, [state.quests]);
+  const overallRank = useMemo(() => rankFromProgressPct(overallProgressPct), [overallProgressPct]);
+  const overallProgressPctDisplay = Math.round(overallProgressPct * 100);
+  const overallLevel = Math.max(1, overallProgressPctDisplay);
 
   const streakDays = useMemo(() => {
     let count = 0;
@@ -1392,11 +1603,11 @@ export default function LevelUpQuestBoard() {
     if (!settings.weeklyBossEnabled) return null;
 
     const totalReps = state.quests
-      .filter((q) => q.kind === "reps")
-      .reduce((sum, q) => sum + targetForLevel(q, level), 0);
+      .filter((q) => q.unitType === "reps")
+      .reduce((sum, q) => sum + (q.currentTargetValue || 0), 0);
 
-    const dist = state.quests.find((q) => q.kind === "distance");
-    const runTarget = dist ? Math.min(5, Math.round(targetForLevel(dist, level) * 1.5 * 10) / 10) : 1;
+    const dist = state.quests.find((q) => q.unitType === "distance");
+    const runTarget = dist ? Math.min(5, Math.round(dist.currentTargetValue * 1.5 * 10) / 10) : 1;
 
     return {
       id: bossKey,
@@ -1407,7 +1618,7 @@ export default function LevelUpQuestBoard() {
       kind: "boss",
       meta: { totalReps, runTarget },
     };
-  }, [settings.weeklyBossEnabled, bossKey, state.quests, level]);
+  }, [settings.weeklyBossEnabled, bossKey, state.quests]);
 
   const bossDone = useMemo(() => {
     if (!boss) return false;
@@ -1445,21 +1656,19 @@ export default function LevelUpQuestBoard() {
       if (!q) return prev;
 
       const currentDone = { ...(day.completed || {}) };
-      const modifiers = currentDone[questId]?.modifiers || [];
+      const prevAward = currentDone[questId]?.xp || 0;
 
-      const effStreak = isCooldownActive ? 0 : streakDays;
+      const pct = progressPct(q.currentTargetValue, q.sTargetValue);
+      const rank = rankFromProgressPct(pct);
+      const cap = xpCapForRank(rank);
+      const baseXP = baseXPForRank(rank);
+      const improvement = q.currentTargetValue > q.baselineValue;
+      const improvementXP = improvement ? Math.round(baseXP * IMPROVEMENT_BONUS_MULT) : 0;
+      const rawAward = Math.round((baseXP + improvementXP) * priorityMultiplier(q.priority));
+      const remaining = Math.max(0, cap - (q.xp || 0));
+      const award = Math.max(0, Math.min(rawAward, remaining));
 
-      const xp = xpForQuest(q, {
-        level,
-        streakDays: effStreak,
-        settings: prev.settings,
-        isBoss: false,
-        modifiers,
-      });
-
-      const earnedDelta = was ? -xp : xp;
-      currentDone[questId] = { done: !was, modifiers };
-
+      const earnedDelta = was ? -prevAward : award;
       let newDebt = day.xpDebt || 0;
       let credited = earnedDelta;
       if (earnedDelta > 0 && prev.settings.penaltyMode === "xp_debt" && newDebt > 0) {
@@ -1467,6 +1676,8 @@ export default function LevelUpQuestBoard() {
         newDebt -= pay;
         credited -= pay;
       }
+      const nextDone = !was;
+      currentDone[questId] = { done: nextDone, xp: nextDone ? Math.max(0, credited) : 0 };
 
       const newDay = {
         ...day,
@@ -1475,8 +1686,16 @@ export default function LevelUpQuestBoard() {
         xpDebt: newDebt,
       };
 
+      const updatedQuests = prev.quests.map((quest) => {
+        if (quest.id !== questId) return quest;
+        const nextXP = Math.max(0, (quest.xp || 0) + credited);
+        const nextBaseline = !was && quest.currentTargetValue > quest.baselineValue ? quest.currentTargetValue : quest.baselineValue;
+        return { ...quest, xp: nextXP, baselineValue: nextBaseline };
+      });
+
       return {
         ...prev,
+        quests: updatedQuests,
         totalXP: Math.max(0, prev.totalXP + credited),
         days: { ...prev.days, [key]: newDay },
       };
@@ -1489,14 +1708,14 @@ export default function LevelUpQuestBoard() {
     setState((prev) => {
       const entry = prev.days[bossKey] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "" };
       const was = !!entry.completed?.[boss.id]?.done;
+      const prevAward = entry.completed?.[boss.id]?.xp || 0;
 
       const base = boss.baseXP;
-      const effStreak = isCooldownActive ? 0 : streakDays;
-      const bossXP = Math.round(base * (1 + Math.min(0.6, (level - 1) * 0.02)) * (1 + Math.min(0.2, effStreak / 100)));
-      const delta = was ? -bossXP : bossXP;
+      const bossXP = base;
+      const delta = was ? -prevAward : bossXP;
 
       const completed = { ...(entry.completed || {}) };
-      completed[boss.id] = { done: !was, modifiers: ["Boss"] };
+      completed[boss.id] = { done: !was, modifiers: ["Boss"], xp: !was ? bossXP : 0 };
 
       let newDebt = entry.xpDebt || 0;
       let credited = delta;
@@ -1525,10 +1744,6 @@ export default function LevelUpQuestBoard() {
     setState((prev) => ({ ...prev, settings: { ...prev.settings, penaltyMode: mode } }));
   }
 
-  function setHardcore(v) {
-    setState((prev) => ({ ...prev, settings: { ...prev.settings, hardcore: v } }));
-  }
-
   function setWeeklyBossEnabled(v) {
     setState((prev) => ({ ...prev, settings: { ...prev.settings, weeklyBossEnabled: v } }));
   }
@@ -1542,6 +1757,9 @@ export default function LevelUpQuestBoard() {
 
   function addQuest() {
     const id = `q_${Math.random().toString(16).slice(2)}`;
+    const unitType = "reps";
+    const category = "body";
+    const currentTargetValue = 10;
     setState((prev) => ({
       ...prev,
       quests: [
@@ -1549,22 +1767,28 @@ export default function LevelUpQuestBoard() {
         {
           id,
           name: "New Quest",
-          kind: "reps",
-          baseTarget: 10,
-          scaleEveryLevels: 3,
-          scaleAmount: 2,
-          baseXP: 25,
-          tier: "Side",
+          category,
+          unitType,
+          currentTargetValue,
+          sTargetValue: defaultSTargetValue({ name: "New Quest", unitType, category }),
+          baselineValue: currentTargetValue,
+          priority: "minor",
+          xp: 0,
         },
       ],
     }));
   }
 
   function deleteQuest(id) {
-    setState((prev) => ({
-      ...prev,
-      quests: prev.quests.filter((q) => q.id !== id),
-    }));
+    setState((prev) => {
+      const removed = prev.quests.find((q) => q.id === id);
+      const removedXP = removed?.xp || 0;
+      return {
+        ...prev,
+        totalXP: Math.max(0, prev.totalXP - removedXP),
+        quests: prev.quests.filter((q) => q.id !== id),
+      };
+    });
   }
 
   const stats = useMemo(() => {
@@ -1586,6 +1810,15 @@ export default function LevelUpQuestBoard() {
       }
     }
 
+    const categoryProgress = { body: { progressPct: 0, rank: "E" }, mind: { progressPct: 0, rank: "E" }, craft: { progressPct: 0, rank: "E" } };
+    for (const category of QUEST_CATEGORIES) {
+      const list = state.quests.filter((q) => q.category === category);
+      if (!list.length) continue;
+      const sum = list.reduce((acc, q) => acc + progressPct(q.currentTargetValue, q.sTargetValue), 0);
+      const pct = sum / list.length;
+      categoryProgress[category] = { progressPct: pct, rank: rankFromProgressPct(pct) };
+    }
+
     return {
       totalDays,
       activeDays,
@@ -1594,6 +1827,7 @@ export default function LevelUpQuestBoard() {
       debt: state.days[dateKey]?.xpDebt || 0,
       questTotals,
       questDone,
+      categoryProgress,
     };
   }, [state.days, state.quests, dateKey]);
 
@@ -1637,18 +1871,15 @@ export default function LevelUpQuestBoard() {
     <Shell page={page}>
       <Header
         tab={tab}
-        rank={rank}
+        overallRank={overallRank}
+        overallProgressPctDisplay={overallProgressPctDisplay}
         isDark={isDark}
         textMuted={textMuted}
-        textSoft={textSoft}
-        level={level}
         streakDays={streakDays}
         isCooldownActive={isCooldownActive}
         toggleTheme={toggleTheme}
         setTab={setTab}
         resetAll={resetAll}
-        xpIntoLevel={xpIntoLevel}
-        nextReq={nextReq}
         border={border}
         surface={surface}
       />
@@ -1657,16 +1888,11 @@ export default function LevelUpQuestBoard() {
         <TodayPanel
           state={state}
           todays={todays}
-          level={level}
-          streakDays={streakDays}
-          isCooldownActive={isCooldownActive}
           settings={settings}
-          stats={stats}
           boss={boss}
           bossDone={bossDone}
           toggleQuestDone={toggleQuestDone}
           toggleBossDone={toggleBossDone}
-          setHardcore={setHardcore}
           setPenaltyMode={setPenaltyMode}
           resetAll={resetAll}
           isDark={isDark}
@@ -1699,7 +1925,6 @@ export default function LevelUpQuestBoard() {
       {tab === "quests" ? (
         <QuestsPanel
           state={state}
-          level={level}
           textMuted={textMuted}
           textSoft={textSoft}
           isDark={isDark}
@@ -1715,14 +1940,13 @@ export default function LevelUpQuestBoard() {
           dateKey={dateKey}
           state={state}
           stats={stats}
-          level={level}
-          rank={rank}
+          overallRank={overallRank}
+          overallLevel={overallLevel}
           streakDays={streakDays}
           isDark={isDark}
           border={border}
           surface={surface}
           textMuted={textMuted}
-          textSoft={textSoft}
           setTab={setTab}
           resetAll={resetAll}
         />
@@ -1753,22 +1977,12 @@ export default function LevelUpQuestBoard() {
 // Tiny sanity tests (dev-only)
 // -----------------------------
 function runSanityTests() {
-  // Level math
+  // Rank thresholds
   {
-    const r0 = levelFromXP(0);
-    console.assert(r0.level === 1, "Expected level 1 at 0 XP");
-    console.assert(r0.xpIntoLevel === 0, "Expected 0 xpIntoLevel at 0 XP");
-
-    const r100 = levelFromXP(100);
-    console.assert(r100.level === 2, "Expected level 2 at 100 XP (first threshold)");
-  }
-
-  // Scaling
-  {
-    const q = { id: "t", kind: "reps", baseTarget: 10, scaleEveryLevels: 3, scaleAmount: 2 };
-    console.assert(targetForLevel(q, 1) === 10, "Level 1 target should be base");
-    console.assert(targetForLevel(q, 3) === 10, "Level 3 still base");
-    console.assert(targetForLevel(q, 4) === 12, "Level 4 should bump by 2");
+    console.assert(rankFromProgressPct(0.05) === "E", "Progress 5% should be E");
+    console.assert(rankFromProgressPct(0.35) === "D", "Progress 35% should be D");
+    console.assert(rankFromProgressPct(0.6) === "B", "Progress 60% should be B");
+    console.assert(rankFromProgressPct(0.92) === "S", "Progress 92% should be S");
   }
 
   // Date + month matrix
@@ -1781,11 +1995,10 @@ function runSanityTests() {
     console.assert(weeks.every((w) => w.length === 7), "Each week should have 7 days");
   }
 
-  // XP calc sanity
+  // XP cap sanity
   {
-    const q = { id: "x", tier: "Main", baseXP: 30 };
-    const xp = xpForQuest(q, { level: 1, streakDays: 0, settings: DEFAULT_SETTINGS, isBoss: false, modifiers: [] });
-    console.assert(xp > 0, "xpForQuest should return positive XP");
+    console.assert(xpCapForRank("E") > 0, "XP cap should be positive");
+    console.assert(baseXPForRank("A") > baseXPForRank("E"), "Higher ranks should have higher base XP");
   }
 
   // Storage key
