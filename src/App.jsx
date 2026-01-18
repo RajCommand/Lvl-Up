@@ -434,6 +434,782 @@ function DayModalContent({ dayKey, state, setState, isDark, border, textMuted })
   );
 }
 
+function Shell({ children, page }) {
+  return (
+    <div className={cx("min-h-screen", page)}>
+      <div className="mx-auto max-w-6xl px-4 py-6">{children}</div>
+    </div>
+  );
+}
+
+function Tabs({ tab, setTab, isDark }) {
+  const items = [
+    { id: "today", label: "Today" },
+    { id: "calendar", label: "Calendar" },
+    { id: "quests", label: "Quests" },
+    { id: "stats", label: "Stats" },
+    { id: "settings", label: "Settings" },
+  ];
+
+  const tabBase = "rounded-xl px-3 py-2 text-sm font-semibold transition border";
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((it) => {
+        const active = tab === it.id;
+        const cls = isDark
+          ? active
+            ? "bg-zinc-200 text-zinc-900 border-zinc-200"
+            : "bg-zinc-800 text-zinc-100 border-zinc-700 hover:bg-zinc-700"
+          : active
+          ? "bg-zinc-900 text-white border-zinc-900"
+          : "bg-white text-zinc-900 border-zinc-200 hover:bg-zinc-50";
+
+        return (
+          <button key={it.id} className={cx(tabBase, cls)} onClick={() => setTab(it.id)}>
+            {it.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Header({
+  tab,
+  rank,
+  isDark,
+  textMuted,
+  textSoft,
+  level,
+  streakDays,
+  isCooldownActive,
+  toggleTheme,
+  setTab,
+  resetAll,
+  xpIntoLevel,
+  nextReq,
+  border,
+  surface,
+}) {
+  return (
+    <div className="mb-6 flex flex-col gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-black tracking-tight">Level Up: Quest Board</h1>
+            <Pill tone={rank === "S" || rank === "A" ? "good" : rank === "E" ? "warn" : "neutral"} isDark={isDark}>
+              Rank {rank}
+            </Pill>
+          </div>
+          <div className={cx("mt-1 text-sm", textMuted)}>
+            Level <span className={cx("font-semibold", textSoft)}>{level}</span> • Streak{" "}
+            <span className={cx("font-semibold", textSoft)}>{streakDays}</span> day{streakDays === 1 ? "" : "s"}
+            {isCooldownActive ? <span className="ml-2 text-amber-500">• Cooldown active (bonus XP disabled)</span> : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={toggleTheme} isDark={isDark}>
+            {isDark ? "Light Mode" : "Dark Mode"}
+          </Button>
+          <Button variant="outline" onClick={() => setTab("today")} isDark={isDark}>
+            Go to Today
+          </Button>
+        </div>
+      </div>
+
+      <Card className="p-4" border={border} surface={surface}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className={cx("text-sm font-semibold", textSoft)}>XP Progress</div>
+            <div className={cx("mt-1 text-sm", textMuted)}>
+              {xpIntoLevel} / {nextReq} XP to next level
+            </div>
+          </div>
+          <div className="w-full sm:w-1/2">
+            <ProgressBar value={xpIntoLevel} max={nextReq} isDark={isDark} />
+          </div>
+        </div>
+      </Card>
+
+      <div className="flex items-center justify-between">
+        <Tabs tab={tab} setTab={setTab} isDark={isDark} />
+        <div className="hidden sm:block">
+          <Button variant="danger" onClick={resetAll} isDark={isDark}>
+            Reset
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TodayPanel({
+  state,
+  todays,
+  level,
+  streakDays,
+  isCooldownActive,
+  settings,
+  stats,
+  boss,
+  bossDone,
+  toggleQuestDone,
+  toggleBossDone,
+  setHardcore,
+  setPenaltyMode,
+  resetAll,
+  isDark,
+  border,
+  surface,
+  textMuted,
+  textSoft,
+}) {
+  const doneCount = state.quests.filter((q) => !!todays.completed?.[q.id]?.done).length;
+  const total = state.quests.length;
+  const percent = total ? Math.round((doneCount / total) * 100) : 0;
+
+  const debt = todays.xpDebt || 0;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-extrabold">Today’s Quests</div>
+            <div className={cx("mt-1 text-sm", textMuted)}>
+              {fmtDateKey(today())} • {doneCount}/{total} completed • {todays.earnedXP || 0} XP gained today
+            </div>
+          </div>
+          <Pill tone={percent >= 80 ? "good" : percent >= 40 ? "warn" : "bad"} isDark={isDark}>
+            {percent}%
+          </Pill>
+        </div>
+
+        {debt > 0 ? (
+          <div
+            className={cx(
+              "mt-3 rounded-xl border p-3 text-sm",
+              isDark ? "border-amber-900/40 bg-amber-900/20 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
+            )}
+          >
+            <div className="font-semibold">XP Debt:</div>
+            <div>{debt} XP must be repaid before XP counts toward leveling up.</div>
+          </div>
+        ) : null}
+
+        <div className="mt-4 space-y-2">
+          {state.quests.map((q) => {
+            const done = !!todays.completed?.[q.id]?.done;
+            const target = targetForLevel(q, level);
+            const effStreak = isCooldownActive ? 0 : streakDays;
+            const xp = xpForQuest(q, { level, streakDays: effStreak, settings, isBoss: false, modifiers: [] });
+
+            const cardCls = done
+              ? isDark
+                ? "border-emerald-900/40 bg-emerald-900/20"
+                : "border-emerald-200 bg-emerald-50"
+              : isDark
+              ? "border-zinc-800 bg-zinc-950/10"
+              : "border-zinc-200 bg-white";
+
+            return (
+              <button
+                key={q.id}
+                onClick={() => toggleQuestDone(q.id)}
+                className={cx("w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div className={cx("h-3 w-3 rounded-full", done ? "bg-emerald-500" : isDark ? "bg-zinc-700" : "bg-zinc-300")} />
+                      <div className="truncate text-sm font-extrabold">{q.name}</div>
+                      <Pill isDark={isDark}>{q.tier}</Pill>
+                    </div>
+                    <div className={cx("mt-1 text-xs", textMuted)}>
+                      Target:{" "}
+                      <span className={cx("font-semibold", textSoft)}>
+                        {target}
+                        {q.kind === "distance" ? " km" : " reps"}
+                      </span>
+                      <span className="mx-2">•</span>
+                      Reward: <span className={cx("font-semibold", textSoft)}>{xp} XP</span>
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <Pill tone={done ? "good" : "neutral"} isDark={isDark}>
+                      {done ? "Complete" : "Pending"}
+                    </Pill>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {boss ? (
+          <div className="mt-6">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-extrabold">Weekly Boss</div>
+              <Pill tone={bossDone ? "good" : "warn"} isDark={isDark}>
+                {bossDone ? "Cleared" : "Available"}
+              </Pill>
+            </div>
+
+            <div
+              className={cx(
+                "w-full rounded-2xl border p-3 text-left transition hover:shadow-sm",
+                bossDone
+                  ? isDark
+                    ? "border-violet-900/40 bg-violet-900/20"
+                    : "border-violet-300 bg-violet-50"
+                  : isDark
+                  ? "border-zinc-800 bg-zinc-950/10"
+                  : "border-zinc-200 bg-white"
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-extrabold">{boss.name}</div>
+                  <div className={cx("mt-1 text-xs", textMuted)}>{boss.desc}</div>
+                  <div className={cx("mt-1 text-xs", textMuted)}>
+                    Reward: <span className={cx("font-semibold", textSoft)}>High XP</span>
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  <Button onClick={toggleBossDone} variant={bossDone ? "outline" : "default"} isDark={isDark}>
+                    {bossDone ? "Undo" : "Claim"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      <div className="space-y-4">
+        <Card className="p-4" border={border} surface={surface}>
+          <div className="text-sm font-extrabold">System Status</div>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Total XP</div>
+              <div className="mt-1 text-lg font-black">{state.totalXP}</div>
+            </div>
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Today XP</div>
+              <div className="mt-1 text-lg font-black">{todays.earnedXP || 0}</div>
+            </div>
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Compliance (30d)</div>
+              <div className="mt-1 text-lg font-black">{stats.compliance}%</div>
+            </div>
+            <div className={cx("rounded-xl border p-3", border)}>
+              <div className={cx("text-xs", textMuted)}>Avg XP (active)</div>
+              <div className="mt-1 text-lg font-black">{stats.avgXP}</div>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-4" border={border} surface={surface}>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-extrabold">Hardcore Mode</div>
+              <div className={cx("mt-1 text-xs", textMuted)}>Increases stakes (you can expand this later).</div>
+            </div>
+            <label className="inline-flex cursor-pointer items-center gap-2">
+              <input type="checkbox" checked={settings.hardcore} onChange={(e) => setHardcore(e.target.checked)} className="h-4 w-4" />
+              <span className="text-sm font-semibold">{settings.hardcore ? "On" : "Off"}</span>
+            </label>
+          </div>
+
+          <div className="mt-4">
+            <div className={cx("text-xs font-semibold", textMuted)}>Penalty Mode</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant={settings.penaltyMode === "xp_debt" ? "default" : "outline"} onClick={() => setPenaltyMode("xp_debt")} isDark={isDark}>
+                XP Debt
+              </Button>
+              <Button variant={settings.penaltyMode === "cooldown" ? "default" : "outline"} onClick={() => setPenaltyMode("cooldown")} isDark={isDark}>
+                Cooldown
+              </Button>
+            </div>
+            <div className={cx("mt-2 text-xs", textMuted)}>
+              {settings.penaltyMode === "xp_debt"
+                ? "Missed days add XP debt that must be repaid before leveling counts."
+                : "Missed days trigger a 24h cooldown (bonus XP disabled)."}
+            </div>
+          </div>
+        </Card>
+
+        <div className="sm:hidden">
+          <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
+            Reset
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CalendarPanel({
+  dateKey,
+  state,
+  setState,
+  selectedDay,
+  setSelectedDay,
+  modalDayKey,
+  setModalDayKey,
+  dayModalOpen,
+  setDayModalOpen,
+  setCalCursor,
+  weeks,
+  monthName,
+  isDark,
+  border,
+  surface,
+  textMuted,
+}) {
+  const nowKey = dateKey;
+
+  function dayTone(key) {
+    const e = state.days[key];
+    if (!e) return "none";
+    if (e.xpDebt > 0) return "debt";
+    if ((e.earnedXP || 0) > 0) return "good";
+    if (e.note === "(missed)") return "missed";
+    return "none";
+  }
+
+  const toneCls = {
+    good: isDark ? "bg-emerald-900/30 text-emerald-100" : "bg-emerald-100 text-emerald-900",
+    missed: isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-200 text-zinc-800",
+    debt: isDark ? "bg-amber-900/30 text-amber-100" : "bg-amber-100 text-amber-900",
+    none: "bg-transparent",
+  };
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-lg font-extrabold">{monthName}</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>Tap a day to view XP + notes</div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() =>
+                setCalCursor((p) => {
+                  const d = new Date(p.y, p.m, 1);
+                  d.setMonth(d.getMonth() - 1);
+                  return { y: d.getFullYear(), m: d.getMonth() };
+                })
+              }
+              isDark={isDark}
+            >
+              Prev
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setCalCursor((p) => {
+                  const d = new Date(p.y, p.m, 1);
+                  d.setMonth(d.getMonth() + 1);
+                  return { y: d.getFullYear(), m: d.getMonth() };
+                })
+              }
+              isDark={isDark}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+
+        <div className={cx("mt-4 grid grid-cols-7 gap-2 text-xs font-semibold", textMuted)}>
+          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+            <div key={d} className="px-1">
+              {d}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-2 grid grid-cols-7 gap-2">
+          {weeks.flat().map(({ date, inMonth }, idx) => {
+            const key = fmtDateKey(date);
+            const tone = dayTone(key);
+            const isToday = key === nowKey;
+            const e = state.days[key];
+            const xp = e?.earnedXP || 0;
+
+            return (
+              <button
+                key={idx}
+                onClick={() => {
+                  setSelectedDay(key);
+                  setModalDayKey(key);
+                  setDayModalOpen(true);
+                }}
+                className={cx(
+                  "aspect-square rounded-xl border px-2 py-2 text-left transition hover:shadow-sm active:scale-[0.99]",
+                  inMonth ? border : "border-transparent opacity-50",
+                  toneCls[tone],
+                  isToday ? (isDark ? "ring-2 ring-zinc-100" : "ring-2 ring-zinc-900") : ""
+                )}
+              >
+                <div className="flex items-start justify-between">
+                  <div className={cx("text-sm font-black", inMonth ? "" : "opacity-60")}>{date.getDate()}</div>
+                  {xp > 0 ? <div className="text-[10px] font-bold">+{xp}</div> : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          <Pill tone="good" isDark={isDark}>
+            Active day
+          </Pill>
+          <Pill tone="warn" isDark={isDark}>
+            XP debt
+          </Pill>
+          <Pill isDark={isDark}>Missed</Pill>
+        </div>
+      </Card>
+
+      <DayInspector
+        state={state}
+        selectedDay={selectedDay}
+        setState={setState}
+        isDark={isDark}
+        border={border}
+        surface={surface}
+        textMuted={textMuted}
+      />
+
+      <Modal
+        open={dayModalOpen}
+        title={`Day Report • ${modalDayKey}`}
+        onClose={() => setDayModalOpen(false)}
+        isDark={isDark}
+        border={border}
+        surface={surface}
+        textMuted={textMuted}
+      >
+        <DayModalContent dayKey={modalDayKey} state={state} setState={setState} isDark={isDark} border={border} textMuted={textMuted} />
+      </Modal>
+    </div>
+  );
+}
+
+function QuestsPanel({ state, level, textMuted, textSoft, isDark, border, surface, updateQuest, addQuest, deleteQuest }) {
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-extrabold">Quest Editor</div>
+            <div className={cx("mt-1 text-sm", textMuted)}>Edit base targets and scaling. Your current level affects today’s target.</div>
+          </div>
+          <Button onClick={addQuest} isDark={isDark}>
+            Add Quest
+          </Button>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {state.quests.map((q) => {
+            const target = targetForLevel(q, level);
+            return (
+              <div key={q.id} className={cx("rounded-2xl border p-3", border)}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={q.name}
+                        onChange={(e) => updateQuest(q.id, { name: e.target.value })}
+                        className={cx(
+                          "w-full rounded-lg border px-2 py-1 text-sm font-extrabold outline-none focus:ring-2",
+                          isDark ? "border-zinc-800 bg-zinc-950/10 focus:ring-zinc-100" : "border-zinc-200 bg-white focus:ring-zinc-900"
+                        )}
+                      />
+                      <Pill isDark={isDark}>{q.tier}</Pill>
+                    </div>
+                    <div className={cx("mt-1 text-xs", textMuted)}>
+                      Current target at Level {level}: <span className={cx("font-bold", textSoft)}>{target}{q.kind === "distance" ? " km" : " reps"}</span>
+                    </div>
+                  </div>
+                  <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
+                    Delete
+                  </Button>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Type</div>
+                    <select
+                      value={q.kind}
+                      onChange={(e) => updateQuest(q.id, { kind: e.target.value })}
+                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                    >
+                      <option value="reps">Reps</option>
+                      <option value="distance">Distance (km)</option>
+                      <option value="time">Time (min)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Tier</div>
+                    <select
+                      value={q.tier}
+                      onChange={(e) => updateQuest(q.id, { tier: e.target.value })}
+                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                    >
+                      <option value="Main">Main</option>
+                      <option value="Side">Side</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Base Target</div>
+                    <input
+                      type="number"
+                      step={q.kind === "distance" ? "0.1" : "1"}
+                      value={q.baseTarget}
+                      onChange={(e) => updateQuest(q.id, { baseTarget: Number(e.target.value) })}
+                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                    />
+                  </div>
+
+                  <div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Base XP</div>
+                    <input
+                      type="number"
+                      value={q.baseXP}
+                      onChange={(e) => updateQuest(q.id, { baseXP: Number(e.target.value) })}
+                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                    />
+                  </div>
+
+                  <div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Scale Every (Levels)</div>
+                    <input
+                      type="number"
+                      value={q.scaleEveryLevels}
+                      onChange={(e) => updateQuest(q.id, { scaleEveryLevels: Math.max(1, Number(e.target.value)) })}
+                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                    />
+                  </div>
+
+                  <div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>Scale Amount</div>
+                    <input
+                      type="number"
+                      step={q.kind === "distance" ? "0.1" : "1"}
+                      value={q.scaleAmount}
+                      onChange={(e) => updateQuest(q.id, { scaleAmount: Number(e.target.value) })}
+                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      <Card className="p-4" border={border} surface={surface}>
+        <div className="text-sm font-extrabold">How scaling works</div>
+        <div className={cx("mt-2 text-sm", textMuted)}>Each quest increases its target every N levels by a fixed amount.</div>
+        <div className={cx("mt-4 rounded-xl border p-3 text-xs", border, textSoft)}>
+          Example: base 10 pushups, scaleEvery=3, scaleAmount=2
+          <div className="mt-2">
+            Level 1–2: 10
+            <br />
+            Level 3–5: 12
+            <br />
+            Level 6–8: 14
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function StatsPanel({ dateKey, state, stats, level, rank, streakDays, isDark, border, surface, textMuted, textSoft, setTab, resetAll }) {
+  const keys = Object.keys(state.days).filter((k) => k <= dateKey).sort();
+  const last7 = keys.slice(-7);
+
+  const bars = last7.map((k) => ({ key: k, xp: state.days[k]?.earnedXP || 0 }));
+  const maxXP = Math.max(1, ...bars.map((b) => b.xp));
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
+        <div className="text-lg font-extrabold">Stats</div>
+        <div className={cx("mt-1 text-sm", textMuted)}>Last 7 days XP</div>
+
+        <div className="mt-4 grid grid-cols-7 gap-2">
+          {bars.map((b) => {
+            const h = Math.round((b.xp / maxXP) * 100);
+            const isToday = b.key === dateKey;
+            return (
+              <div key={b.key} className="flex flex-col items-center gap-2">
+                <div className={cx("relative h-24 w-full rounded-xl border p-1", border, isDark ? "bg-zinc-950/10" : "bg-white")}>
+                  <div className={cx("absolute bottom-1 left-1 right-1 rounded-lg", isDark ? "bg-zinc-100" : "bg-zinc-900")} style={{ height: `${h}%` }} />
+                </div>
+                <div className={cx("text-[10px] font-bold", isToday ? (isDark ? "text-zinc-100" : "text-zinc-900") : "text-zinc-500")}>
+                  {b.key.slice(5)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className={cx("rounded-xl border p-3", border)}>
+            <div className={cx("text-xs", textMuted)}>Level</div>
+            <div className="mt-1 text-lg font-black">{level}</div>
+          </div>
+          <div className={cx("rounded-xl border p-3", border)}>
+            <div className={cx("text-xs", textMuted)}>Rank</div>
+            <div className="mt-1 text-lg font-black">{rank}</div>
+          </div>
+          <div className={cx("rounded-xl border p-3", border)}>
+            <div className={cx("text-xs", textMuted)}>Streak</div>
+            <div className="mt-1 text-lg font-black">{streakDays}</div>
+          </div>
+          <div className={cx("rounded-xl border p-3", border)}>
+            <div className={cx("text-xs", textMuted)}>Debt (today)</div>
+            <div className="mt-1 text-lg font-black">{state.days[dateKey]?.xpDebt || 0}</div>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <div className="text-sm font-extrabold">Quest consistency (last 14 days)</div>
+          <div className="mt-3 space-y-2">
+            {state.quests.map((q) => {
+              const done = stats.questDone[q.id] || 0;
+              const tot = stats.questTotals[q.id] || 0;
+              const pct = tot ? Math.round((done / tot) * 100) : 0;
+              return (
+                <div key={q.id} className={cx("rounded-xl border p-3", border)}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-bold">{q.name}</div>
+                    <div className={cx("text-xs font-semibold", textMuted)}>
+                      {done}/{tot}
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <ProgressBar value={pct} max={100} isDark={isDark} />
+                    <div className={cx("mt-1 text-xs", textMuted)}>{pct}%</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4" border={border} surface={surface}>
+        <div className="text-sm font-extrabold">Actions</div>
+        <div className="mt-3 space-y-2">
+          <Button variant="outline" onClick={() => setTab("calendar")} className="w-full" isDark={isDark}>
+            Open Calendar
+          </Button>
+          <Button variant="outline" onClick={() => setTab("quests")} className="w-full" isDark={isDark}>
+            Edit Quests
+          </Button>
+          <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
+            Hard Reset
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll, setWeeklyBossEnabled, setState }) {
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
+        <div className="text-lg font-extrabold">Settings</div>
+        <div className={cx("mt-1 text-sm", textMuted)}>This MVP is offline-first using LocalStorage.</div>
+
+        <div className="mt-5 space-y-4">
+          <div className={cx("rounded-2xl border p-4", border)}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-extrabold">Weekly Boss</div>
+                <div className={cx("mt-1 text-xs", textMuted)}>Enable or disable the weekly raid challenge.</div>
+              </div>
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input type="checkbox" checked={settings.weeklyBossEnabled} onChange={(e) => setWeeklyBossEnabled(e.target.checked)} className="h-4 w-4" />
+                <span className="text-sm font-semibold">{settings.weeklyBossEnabled ? "On" : "Off"}</span>
+              </label>
+            </div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-4", border)}>
+            <div className="text-sm font-extrabold">Streak Bonus</div>
+            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <div className={cx("text-xs font-semibold", textMuted)}>% per day</div>
+                <input
+                  type="number"
+                  value={settings.streakBonusPctPerDay}
+                  onChange={(e) =>
+                    setState((p) => ({
+                      ...p,
+                      settings: { ...p.settings, streakBonusPctPerDay: Number(e.target.value) },
+                    }))
+                  }
+                  className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                />
+              </div>
+              <div>
+                <div className={cx("text-xs font-semibold", textMuted)}>Max bonus %</div>
+                <input
+                  type="number"
+                  value={settings.maxStreakBonusPct}
+                  onChange={(e) =>
+                    setState((p) => ({
+                      ...p,
+                      settings: { ...p.settings, maxStreakBonusPct: Number(e.target.value) },
+                    }))
+                  }
+                  className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                />
+              </div>
+            </div>
+            <div className={cx("mt-2 text-xs", textMuted)}>Small multipliers keep leveling hard (but rewarding).</div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-4", border)}>
+            <div className="text-sm font-extrabold">Danger Zone</div>
+            <div className={cx("mt-2 text-xs", textMuted)}>Reset wipes your progress and quests.</div>
+            <div className="mt-3">
+              <Button variant="danger" onClick={resetAll} isDark={isDark}>
+                Reset Everything
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4" border={border} surface={surface}>
+        <div className="text-sm font-extrabold">Roadmap</div>
+        <div className={cx("mt-2 text-sm", textMuted)}>Next upgrades you can ask me for:</div>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">
+          <li>Quest Modifiers (+XP) + time tracking</li>
+          <li>AI difficulty coach (rule-based first, then LLM)</li>
+          <li>Skill Trees (Fitness + Coding + Study)</li>
+          <li>Notifications + daily reset logic</li>
+          <li>SQLite persistence (better than LocalStorage)</li>
+        </ol>
+      </Card>
+    </div>
+  );
+}
+
 // -----------------------------
 // App
 // -----------------------------
@@ -781,733 +1557,115 @@ export default function LevelUpQuestBoard() {
   const surface = isDark ? "bg-zinc-900" : "bg-white";
   const page = isDark ? "bg-zinc-950 text-zinc-50" : "bg-zinc-50 text-zinc-900";
 
-  const Shell = ({ children }) => (
-    <div className={cx("min-h-screen", page)}>
-      <div className="mx-auto max-w-6xl px-4 py-6">{children}</div>
-    </div>
-  );
+  // -----------------------------
+  // Render
+  // -----------------------------
+  return (
+    <Shell page={page}>
+      <Header
+        tab={tab}
+        rank={rank}
+        isDark={isDark}
+        textMuted={textMuted}
+        textSoft={textSoft}
+        level={level}
+        streakDays={streakDays}
+        isCooldownActive={isCooldownActive}
+        toggleTheme={toggleTheme}
+        setTab={setTab}
+        resetAll={resetAll}
+        xpIntoLevel={xpIntoLevel}
+        nextReq={nextReq}
+        border={border}
+        surface={surface}
+      />
 
-  const Tabs = () => {
-    const items = [
-      { id: "today", label: "Today" },
-      { id: "calendar", label: "Calendar" },
-      { id: "quests", label: "Quests" },
-      { id: "stats", label: "Stats" },
-      { id: "settings", label: "Settings" },
-    ];
-
-    const tabBase = "rounded-xl px-3 py-2 text-sm font-semibold transition border";
-
-    return (
-      <div className="flex flex-wrap gap-2">
-        {items.map((it) => {
-          const active = tab === it.id;
-          const cls = isDark
-            ? active
-              ? "bg-zinc-200 text-zinc-900 border-zinc-200"
-              : "bg-zinc-800 text-zinc-100 border-zinc-700 hover:bg-zinc-700"
-            : active
-            ? "bg-zinc-900 text-white border-zinc-900"
-            : "bg-white text-zinc-900 border-zinc-200 hover:bg-zinc-50";
-
-          return (
-            <button key={it.id} className={cx(tabBase, cls)} onClick={() => setTab(it.id)}>
-              {it.label}
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
-
-  const Header = () => (
-    <div className="mb-6 flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-black tracking-tight">Level Up: Quest Board</h1>
-            <Pill tone={rank === "S" || rank === "A" ? "good" : rank === "E" ? "warn" : "neutral"} isDark={isDark}>
-              Rank {rank}
-            </Pill>
-          </div>
-          <div className={cx("mt-1 text-sm", textMuted)}>
-            Level <span className={cx("font-semibold", textSoft)}>{level}</span> • Streak{" "}
-            <span className={cx("font-semibold", textSoft)}>{streakDays}</span> day{streakDays === 1 ? "" : "s"}
-            {isCooldownActive ? <span className="ml-2 text-amber-500">• Cooldown active (bonus XP disabled)</span> : null}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={toggleTheme} isDark={isDark}>
-            {isDark ? "Light Mode" : "Dark Mode"}
-          </Button>
-          <Button variant="outline" onClick={() => setTab("today")} isDark={isDark}>
-            Go to Today
-          </Button>
-        </div>
-      </div>
-
-      <Card className="p-4" border={border} surface={surface}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className={cx("text-sm font-semibold", textSoft)}>XP Progress</div>
-            <div className={cx("mt-1 text-sm", textMuted)}>
-              {xpIntoLevel} / {nextReq} XP to next level
-            </div>
-          </div>
-          <div className="w-full sm:w-1/2">
-            <ProgressBar value={xpIntoLevel} max={nextReq} isDark={isDark} />
-          </div>
-        </div>
-      </Card>
-
-      <div className="flex items-center justify-between">
-        <Tabs />
-        <div className="hidden sm:block">
-          <Button variant="danger" onClick={resetAll} isDark={isDark}>
-            Reset
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const TodayPanel = () => {
-    const doneCount = state.quests.filter((q) => !!todays.completed?.[q.id]?.done).length;
-    const total = state.quests.length;
-    const percent = total ? Math.round((doneCount / total) * 100) : 0;
-
-    const debt = todays.xpDebt || 0;
-
-    return (
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-lg font-extrabold">Today’s Quests</div>
-              <div className={cx("mt-1 text-sm", textMuted)}>
-                {fmtDateKey(today())} • {doneCount}/{total} completed • {todays.earnedXP || 0} XP gained today
-              </div>
-            </div>
-            <Pill tone={percent >= 80 ? "good" : percent >= 40 ? "warn" : "bad"} isDark={isDark}>
-              {percent}%
-            </Pill>
-          </div>
-
-          {debt > 0 ? (
-            <div
-              className={cx(
-                "mt-3 rounded-xl border p-3 text-sm",
-                isDark ? "border-amber-900/40 bg-amber-900/20 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
-              )}
-            >
-              <div className="font-semibold">XP Debt:</div>
-              <div>{debt} XP must be repaid before XP counts toward leveling up.</div>
-            </div>
-          ) : null}
-
-          <div className="mt-4 space-y-2">
-            {state.quests.map((q) => {
-              const done = !!todays.completed?.[q.id]?.done;
-              const target = targetForLevel(q, level);
-              const effStreak = isCooldownActive ? 0 : streakDays;
-              const xp = xpForQuest(q, { level, streakDays: effStreak, settings, isBoss: false, modifiers: [] });
-
-              const cardCls = done
-                ? isDark
-                  ? "border-emerald-900/40 bg-emerald-900/20"
-                  : "border-emerald-200 bg-emerald-50"
-                : isDark
-                ? "border-zinc-800 bg-zinc-950/10"
-                : "border-zinc-200 bg-white";
-
-              return (
-                <button
-                  key={q.id}
-                  onClick={() => toggleQuestDone(q.id)}
-                  className={cx("w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className={cx("h-3 w-3 rounded-full", done ? "bg-emerald-500" : isDark ? "bg-zinc-700" : "bg-zinc-300")} />
-                        <div className="truncate text-sm font-extrabold">{q.name}</div>
-                        <Pill isDark={isDark}>{q.tier}</Pill>
-                      </div>
-                      <div className={cx("mt-1 text-xs", textMuted)}>
-                        Target:{" "}
-                        <span className={cx("font-semibold", textSoft)}>
-                          {target}
-                          {q.kind === "distance" ? " km" : " reps"}
-                        </span>
-                        <span className="mx-2">•</span>
-                        Reward: <span className={cx("font-semibold", textSoft)}>{xp} XP</span>
-                      </div>
-                    </div>
-                    <div className="shrink-0">
-                      <Pill tone={done ? "good" : "neutral"} isDark={isDark}>
-                        {done ? "Complete" : "Pending"}
-                      </Pill>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {boss ? (
-            <div className="mt-6">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm font-extrabold">Weekly Boss</div>
-                <Pill tone={bossDone ? "good" : "warn"} isDark={isDark}>
-                  {bossDone ? "Cleared" : "Available"}
-                </Pill>
-              </div>
-
-              <div
-                className={cx(
-                  "w-full rounded-2xl border p-3 text-left transition hover:shadow-sm",
-                  bossDone
-                    ? isDark
-                      ? "border-violet-900/40 bg-violet-900/20"
-                      : "border-violet-300 bg-violet-50"
-                    : isDark
-                    ? "border-zinc-800 bg-zinc-950/10"
-                    : "border-zinc-200 bg-white"
-                )}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-extrabold">{boss.name}</div>
-                    <div className={cx("mt-1 text-xs", textMuted)}>{boss.desc}</div>
-                    <div className={cx("mt-1 text-xs", textMuted)}>
-                      Reward: <span className={cx("font-semibold", textSoft)}>High XP</span>
-                    </div>
-                  </div>
-                  <div className="shrink-0">
-                    <Button onClick={toggleBossDone} variant={bossDone ? "outline" : "default"} isDark={isDark}>
-                      {bossDone ? "Undo" : "Claim"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </Card>
-
-        <div className="space-y-4">
-          <Card className="p-4" border={border} surface={surface}>
-            <div className="text-sm font-extrabold">System Status</div>
-            <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-              <div className={cx("rounded-xl border p-3", border)}>
-                <div className={cx("text-xs", textMuted)}>Total XP</div>
-                <div className="mt-1 text-lg font-black">{state.totalXP}</div>
-              </div>
-              <div className={cx("rounded-xl border p-3", border)}>
-                <div className={cx("text-xs", textMuted)}>Today XP</div>
-                <div className="mt-1 text-lg font-black">{todays.earnedXP || 0}</div>
-              </div>
-              <div className={cx("rounded-xl border p-3", border)}>
-                <div className={cx("text-xs", textMuted)}>Compliance (30d)</div>
-                <div className="mt-1 text-lg font-black">{stats.compliance}%</div>
-              </div>
-              <div className={cx("rounded-xl border p-3", border)}>
-                <div className={cx("text-xs", textMuted)}>Avg XP (active)</div>
-                <div className="mt-1 text-lg font-black">{stats.avgXP}</div>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-4" border={border} surface={surface}>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-extrabold">Hardcore Mode</div>
-                <div className={cx("mt-1 text-xs", textMuted)}>Increases stakes (you can expand this later).</div>
-              </div>
-              <label className="inline-flex cursor-pointer items-center gap-2">
-                <input type="checkbox" checked={settings.hardcore} onChange={(e) => setHardcore(e.target.checked)} className="h-4 w-4" />
-                <span className="text-sm font-semibold">{settings.hardcore ? "On" : "Off"}</span>
-              </label>
-            </div>
-
-            <div className="mt-4">
-              <div className={cx("text-xs font-semibold", textMuted)}>Penalty Mode</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button variant={settings.penaltyMode === "xp_debt" ? "default" : "outline"} onClick={() => setPenaltyMode("xp_debt")} isDark={isDark}>
-                  XP Debt
-                </Button>
-                <Button variant={settings.penaltyMode === "cooldown" ? "default" : "outline"} onClick={() => setPenaltyMode("cooldown")} isDark={isDark}>
-                  Cooldown
-                </Button>
-              </div>
-              <div className={cx("mt-2 text-xs", textMuted)}>
-                {settings.penaltyMode === "xp_debt"
-                  ? "Missed days add XP debt that must be repaid before leveling counts."
-                  : "Missed days trigger a 24h cooldown (bonus XP disabled)."}
-              </div>
-            </div>
-          </Card>
-
-          <div className="sm:hidden">
-            <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
-              Reset
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const CalendarPanel = () => {
-    const nowKey = dateKey;
-
-    function dayTone(key) {
-      const e = state.days[key];
-      if (!e) return "none";
-      if (e.xpDebt > 0) return "debt";
-      if ((e.earnedXP || 0) > 0) return "good";
-      if (e.note === "(missed)") return "missed";
-      return "none";
-    }
-
-    const toneCls = {
-      good: isDark ? "bg-emerald-900/30 text-emerald-100" : "bg-emerald-100 text-emerald-900",
-      missed: isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-200 text-zinc-800",
-      debt: isDark ? "bg-amber-900/30 text-amber-100" : "bg-amber-100 text-amber-900",
-      none: "bg-transparent",
-    };
-
-    return (
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-lg font-extrabold">{monthName}</div>
-              <div className={cx("mt-1 text-xs", textMuted)}>Tap a day to view XP + notes</div>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() =>
-                  setCalCursor((p) => {
-                    const d = new Date(p.y, p.m, 1);
-                    d.setMonth(d.getMonth() - 1);
-                    return { y: d.getFullYear(), m: d.getMonth() };
-                  })
-                }
-                isDark={isDark}
-              >
-                Prev
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  setCalCursor((p) => {
-                    const d = new Date(p.y, p.m, 1);
-                    d.setMonth(d.getMonth() + 1);
-                    return { y: d.getFullYear(), m: d.getMonth() };
-                  })
-                }
-                isDark={isDark}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-
-          <div className={cx("mt-4 grid grid-cols-7 gap-2 text-xs font-semibold", textMuted)}>
-            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-              <div key={d} className="px-1">
-                {d}
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-2 grid grid-cols-7 gap-2">
-            {weeks.flat().map(({ date, inMonth }, idx) => {
-              const key = fmtDateKey(date);
-              const tone = dayTone(key);
-              const isToday = key === nowKey;
-              const e = state.days[key];
-              const xp = e?.earnedXP || 0;
-
-              return (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    setSelectedDay(key);
-                    setModalDayKey(key);
-                    setDayModalOpen(true);
-                  }}
-                  className={cx(
-                    "aspect-square rounded-xl border px-2 py-2 text-left transition hover:shadow-sm active:scale-[0.99]",
-                    inMonth ? border : "border-transparent opacity-50",
-                    toneCls[tone],
-                    isToday ? (isDark ? "ring-2 ring-zinc-100" : "ring-2 ring-zinc-900") : ""
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className={cx("text-sm font-black", inMonth ? "" : "opacity-60")}>{date.getDate()}</div>
-                    {xp > 0 ? <div className="text-[10px] font-bold">+{xp}</div> : null}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2 text-xs">
-            <Pill tone="good" isDark={isDark}>
-              Active day
-            </Pill>
-            <Pill tone="warn" isDark={isDark}>
-              XP debt
-            </Pill>
-            <Pill isDark={isDark}>Missed</Pill>
-          </div>
-        </Card>
-
-        <DayInspector
+      {tab === "today" ? (
+        <TodayPanel
           state={state}
-          selectedDay={selectedDay}
+          todays={todays}
+          level={level}
+          streakDays={streakDays}
+          isCooldownActive={isCooldownActive}
+          settings={settings}
+          stats={stats}
+          boss={boss}
+          bossDone={bossDone}
+          toggleQuestDone={toggleQuestDone}
+          toggleBossDone={toggleBossDone}
+          setHardcore={setHardcore}
+          setPenaltyMode={setPenaltyMode}
+          resetAll={resetAll}
+          isDark={isDark}
+          border={border}
+          surface={surface}
+          textMuted={textMuted}
+          textSoft={textSoft}
+        />
+      ) : null}
+      {tab === "calendar" ? (
+        <CalendarPanel
+          dateKey={dateKey}
+          state={state}
           setState={setState}
+          selectedDay={selectedDay}
+          setSelectedDay={setSelectedDay}
+          modalDayKey={modalDayKey}
+          setModalDayKey={setModalDayKey}
+          dayModalOpen={dayModalOpen}
+          setDayModalOpen={setDayModalOpen}
+          setCalCursor={setCalCursor}
+          weeks={weeks}
+          monthName={monthName}
           isDark={isDark}
           border={border}
           surface={surface}
           textMuted={textMuted}
         />
-
-        <Modal
-          open={dayModalOpen}
-          title={`Day Report • ${modalDayKey}`}
-          onClose={() => setDayModalOpen(false)}
+      ) : null}
+      {tab === "quests" ? (
+        <QuestsPanel
+          state={state}
+          level={level}
+          textMuted={textMuted}
+          textSoft={textSoft}
+          isDark={isDark}
+          border={border}
+          surface={surface}
+          updateQuest={updateQuest}
+          addQuest={addQuest}
+          deleteQuest={deleteQuest}
+        />
+      ) : null}
+      {tab === "stats" ? (
+        <StatsPanel
+          dateKey={dateKey}
+          state={state}
+          stats={stats}
+          level={level}
+          rank={rank}
+          streakDays={streakDays}
           isDark={isDark}
           border={border}
           surface={surface}
           textMuted={textMuted}
-        >
-          <DayModalContent dayKey={modalDayKey} state={state} setState={setState} isDark={isDark} border={border} textMuted={textMuted} />
-        </Modal>
-      </div>
-    );
-  };
-
-  const QuestsPanel = () => (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-lg font-extrabold">Quest Editor</div>
-            <div className={cx("mt-1 text-sm", textMuted)}>Edit base targets and scaling. Your current level affects today’s target.</div>
-          </div>
-          <Button onClick={addQuest} isDark={isDark}>
-            Add Quest
-          </Button>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {state.quests.map((q) => {
-            const target = targetForLevel(q, level);
-            return (
-              <div key={q.id} className={cx("rounded-2xl border p-3", border)}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={q.name}
-                        onChange={(e) => updateQuest(q.id, { name: e.target.value })}
-                        className={cx(
-                          "w-full rounded-lg border px-2 py-1 text-sm font-extrabold outline-none focus:ring-2",
-                          isDark ? "border-zinc-800 bg-zinc-950/10 focus:ring-zinc-100" : "border-zinc-200 bg-white focus:ring-zinc-900"
-                        )}
-                      />
-                      <Pill isDark={isDark}>{q.tier}</Pill>
-                    </div>
-                    <div className={cx("mt-1 text-xs", textMuted)}>
-                      Current target at Level {level}: <span className={cx("font-bold", textSoft)}>{target}{q.kind === "distance" ? " km" : " reps"}</span>
-                    </div>
-                  </div>
-                  <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
-                    Delete
-                  </Button>
-                </div>
-
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Type</div>
-                    <select
-                      value={q.kind}
-                      onChange={(e) => updateQuest(q.id, { kind: e.target.value })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    >
-                      <option value="reps">Reps</option>
-                      <option value="distance">Distance (km)</option>
-                      <option value="time">Time (min)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Tier</div>
-                    <select
-                      value={q.tier}
-                      onChange={(e) => updateQuest(q.id, { tier: e.target.value })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    >
-                      <option value="Main">Main</option>
-                      <option value="Side">Side</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Base Target</div>
-                    <input
-                      type="number"
-                      step={q.kind === "distance" ? "0.1" : "1"}
-                      value={q.baseTarget}
-                      onChange={(e) => updateQuest(q.id, { baseTarget: Number(e.target.value) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Base XP</div>
-                    <input
-                      type="number"
-                      value={q.baseXP}
-                      onChange={(e) => updateQuest(q.id, { baseXP: Number(e.target.value) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Scale Every (Levels)</div>
-                    <input
-                      type="number"
-                      value={q.scaleEveryLevels}
-                      onChange={(e) => updateQuest(q.id, { scaleEveryLevels: Math.max(1, Number(e.target.value)) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Scale Amount</div>
-                    <input
-                      type="number"
-                      step={q.kind === "distance" ? "0.1" : "1"}
-                      value={q.scaleAmount}
-                      onChange={(e) => updateQuest(q.id, { scaleAmount: Number(e.target.value) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Card className="p-4" border={border} surface={surface}>
-        <div className="text-sm font-extrabold">How scaling works</div>
-        <div className={cx("mt-2 text-sm", textMuted)}>Each quest increases its target every N levels by a fixed amount.</div>
-        <div className={cx("mt-4 rounded-xl border p-3 text-xs", border, textSoft)}>
-          Example: base 10 pushups, scaleEvery=3, scaleAmount=2
-          <div className="mt-2">
-            Level 1–2: 10
-            <br />
-            Level 3–5: 12
-            <br />
-            Level 6–8: 14
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-
-  const StatsPanel = () => {
-    const keys = Object.keys(state.days).filter((k) => k <= dateKey).sort();
-    const last7 = keys.slice(-7);
-
-    const bars = last7.map((k) => ({ key: k, xp: state.days[k]?.earnedXP || 0 }));
-    const maxXP = Math.max(1, ...bars.map((b) => b.xp));
-
-    return (
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-          <div className="text-lg font-extrabold">Stats</div>
-          <div className={cx("mt-1 text-sm", textMuted)}>Last 7 days XP</div>
-
-          <div className="mt-4 grid grid-cols-7 gap-2">
-            {bars.map((b) => {
-              const h = Math.round((b.xp / maxXP) * 100);
-              const isToday = b.key === dateKey;
-              return (
-                <div key={b.key} className="flex flex-col items-center gap-2">
-                  <div className={cx("relative h-24 w-full rounded-xl border p-1", border, isDark ? "bg-zinc-950/10" : "bg-white")}>
-                    <div className={cx("absolute bottom-1 left-1 right-1 rounded-lg", isDark ? "bg-zinc-100" : "bg-zinc-900")} style={{ height: `${h}%` }} />
-                  </div>
-                  <div className={cx("text-[10px] font-bold", isToday ? (isDark ? "text-zinc-100" : "text-zinc-900") : "text-zinc-500")}>
-                    {b.key.slice(5)}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Level</div>
-              <div className="mt-1 text-lg font-black">{level}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Rank</div>
-              <div className="mt-1 text-lg font-black">{rank}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Streak</div>
-              <div className="mt-1 text-lg font-black">{streakDays}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Debt (today)</div>
-              <div className="mt-1 text-lg font-black">{state.days[dateKey]?.xpDebt || 0}</div>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <div className="text-sm font-extrabold">Quest consistency (last 14 days)</div>
-            <div className="mt-3 space-y-2">
-              {state.quests.map((q) => {
-                const done = stats.questDone[q.id] || 0;
-                const tot = stats.questTotals[q.id] || 0;
-                const pct = tot ? Math.round((done / tot) * 100) : 0;
-                return (
-                  <div key={q.id} className={cx("rounded-xl border p-3", border)}>
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-bold">{q.name}</div>
-                      <div className={cx("text-xs font-semibold", textMuted)}>
-                        {done}/{tot}
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <ProgressBar value={pct} max={100} isDark={isDark} />
-                      <div className={cx("mt-1 text-xs", textMuted)}>{pct}%</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-4" border={border} surface={surface}>
-          <div className="text-sm font-extrabold">Actions</div>
-          <div className="mt-3 space-y-2">
-            <Button variant="outline" onClick={() => setTab("calendar")} className="w-full" isDark={isDark}>
-              Open Calendar
-            </Button>
-            <Button variant="outline" onClick={() => setTab("quests")} className="w-full" isDark={isDark}>
-              Edit Quests
-            </Button>
-            <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
-              Hard Reset
-            </Button>
-          </div>
-        </Card>
-      </div>
-    );
-  };
-
-  const SettingsPanel = () => (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-        <div className="text-lg font-extrabold">Settings</div>
-        <div className={cx("mt-1 text-sm", textMuted)}>This MVP is offline-first using LocalStorage.</div>
-
-        <div className="mt-5 space-y-4">
-          <div className={cx("rounded-2xl border p-4", border)}>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-extrabold">Weekly Boss</div>
-                <div className={cx("mt-1 text-xs", textMuted)}>Enable or disable the weekly raid challenge.</div>
-              </div>
-              <label className="inline-flex cursor-pointer items-center gap-2">
-                <input type="checkbox" checked={settings.weeklyBossEnabled} onChange={(e) => setWeeklyBossEnabled(e.target.checked)} className="h-4 w-4" />
-                <span className="text-sm font-semibold">{settings.weeklyBossEnabled ? "On" : "Off"}</span>
-              </label>
-            </div>
-          </div>
-
-          <div className={cx("rounded-2xl border p-4", border)}>
-            <div className="text-sm font-extrabold">Streak Bonus</div>
-            <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <div className={cx("text-xs font-semibold", textMuted)}>% per day</div>
-                <input
-                  type="number"
-                  value={settings.streakBonusPctPerDay}
-                  onChange={(e) =>
-                    setState((p) => ({
-                      ...p,
-                      settings: { ...p.settings, streakBonusPctPerDay: Number(e.target.value) },
-                    }))
-                  }
-                  className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                />
-              </div>
-              <div>
-                <div className={cx("text-xs font-semibold", textMuted)}>Max bonus %</div>
-                <input
-                  type="number"
-                  value={settings.maxStreakBonusPct}
-                  onChange={(e) =>
-                    setState((p) => ({
-                      ...p,
-                      settings: { ...p.settings, maxStreakBonusPct: Number(e.target.value) },
-                    }))
-                  }
-                  className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                />
-              </div>
-            </div>
-            <div className={cx("mt-2 text-xs", textMuted)}>Small multipliers keep leveling hard (but rewarding).</div>
-          </div>
-
-          <div className={cx("rounded-2xl border p-4", border)}>
-            <div className="text-sm font-extrabold">Danger Zone</div>
-            <div className={cx("mt-2 text-xs", textMuted)}>Reset wipes your progress and quests.</div>
-            <div className="mt-3">
-              <Button variant="danger" onClick={resetAll} isDark={isDark}>
-                Reset Everything
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-4" border={border} surface={surface}>
-        <div className="text-sm font-extrabold">Roadmap</div>
-        <div className={cx("mt-2 text-sm", textMuted)}>Next upgrades you can ask me for:</div>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">
-          <li>Quest Modifiers (+XP) + time tracking</li>
-          <li>AI difficulty coach (rule-based first, then LLM)</li>
-          <li>Skill Trees (Fitness + Coding + Study)</li>
-          <li>Notifications + daily reset logic</li>
-          <li>SQLite persistence (better than LocalStorage)</li>
-        </ol>
-      </Card>
-    </div>
-  );
-
-  // -----------------------------
-  // Render
-  // -----------------------------
-  return (
-    <Shell>
-      <Header />
-
-      {tab === "today" ? <TodayPanel /> : null}
-      {tab === "calendar" ? <CalendarPanel /> : null}
-      {tab === "quests" ? <QuestsPanel /> : null}
-      {tab === "stats" ? <StatsPanel /> : null}
-      {tab === "settings" ? <SettingsPanel /> : null}
+          textSoft={textSoft}
+          setTab={setTab}
+          resetAll={resetAll}
+        />
+      ) : null}
+      {tab === "settings" ? (
+        <SettingsPanel
+          settings={settings}
+          isDark={isDark}
+          border={border}
+          surface={surface}
+          textMuted={textMuted}
+          resetAll={resetAll}
+          setWeeklyBossEnabled={setWeeklyBossEnabled}
+          setState={setState}
+        />
+      ) : null}
 
       <div className={cx("mt-8 text-center text-xs", isDark ? "text-zinc-500" : "text-zinc-500")}>
         Offline-first MVP • LocalStorage • Solo Leveling vibe
