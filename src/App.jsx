@@ -720,7 +720,7 @@ function BottomTabs({ tab, setTab, isDark }) {
   );
 }
 
-function Header({ overallRank, overallProgressPctDisplay, isDark, textMuted, resetAll, border, surface, setTab }) {
+function Header({ overallRank, overallProgressPctDisplay, isDark, textMuted, border, surface, setTab }) {
   return (
     <div className="mb-6 flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -761,9 +761,6 @@ function Header({ overallRank, overallProgressPctDisplay, isDark, textMuted, res
 
       <div className="hidden sm:flex items-center justify-between">
         <div className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">System</div>
-        <Button variant="danger" onClick={resetAll} isDark={isDark}>
-          Reset
-        </Button>
       </div>
     </div>
   );
@@ -778,7 +775,6 @@ function TodayPanel({
   toggleQuestDone,
   toggleBossDone,
   setPenaltyMode,
-  resetAll,
   isDark,
   border,
   surface,
@@ -963,13 +959,7 @@ function TodayPanel({
         </Card>
       </div>
 
-      <div className="space-y-4">
-        <div className="sm:hidden">
-          <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
-            Reset
-          </Button>
-        </div>
-      </div>
+      <div className="space-y-4" />
     </div>
   );
 }
@@ -1305,7 +1295,6 @@ function StatsPanel({
   surface,
   textMuted,
   setTab,
-  resetAll,
 }) {
   const keys = Object.keys(state.days).filter((k) => k <= dateKey).sort();
   const last7 = keys.slice(-7);
@@ -1430,9 +1419,6 @@ function StatsPanel({
             </Button>
             <Button variant="outline" onClick={() => setTab("quests")} className="w-full" isDark={isDark}>
               Edit Quests
-            </Button>
-            <Button variant="danger" onClick={resetAll} className="w-full" isDark={isDark}>
-              Hard Reset
             </Button>
           </div>
         </Card>
@@ -1820,16 +1806,12 @@ export default function LevelUpQuestBoard() {
   }, [state.days, boss, bossKey]);
 
   function resetAll() {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("onboardingComplete", "false");
+      window.location.reload();
+      return;
+    }
     setState(buildDefaultState());
-    const key = fmtDateKey(today());
-    setState({
-      quests: DEFAULT_QUESTS,
-      settings: DEFAULT_SETTINGS,
-      days: { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "" } },
-      totalXP: 0,
-      lastActiveDate: key,
-      cooldownUntil: null,
-    });
     setTab("today");
   }
 
@@ -2068,7 +2050,6 @@ export default function LevelUpQuestBoard() {
         overallProgressPctDisplay={overallProgressPctDisplay}
         isDark={isDark}
         textMuted={textMuted}
-        resetAll={resetAll}
         border={border}
         surface={surface}
         setTab={setTab}
@@ -2084,7 +2065,6 @@ export default function LevelUpQuestBoard() {
           toggleQuestDone={toggleQuestDone}
           toggleBossDone={toggleBossDone}
           setPenaltyMode={setPenaltyMode}
-          resetAll={resetAll}
           isDark={isDark}
           border={border}
           surface={surface}
@@ -2138,7 +2118,6 @@ export default function LevelUpQuestBoard() {
           surface={surface}
           textMuted={textMuted}
           setTab={setTab}
-          resetAll={resetAll}
         />
       ) : null}
       {tab === "settings" ? (
