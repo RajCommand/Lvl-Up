@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Brain } from "lucide-react";
 import { DayTimerClock } from "./components/DayTimerClock";
 
 /**
@@ -173,9 +174,10 @@ const PRIORITY_MULTIPLIER = {
 
 const IMPROVEMENT_BONUS_MULT = 1.5;
 
-const QUEST_CATEGORIES = ["body", "mind", "craft"];
+const QUEST_CATEGORIES = ["body", "mind", "hobbies", "productivity"];
 
 function normalizeQuestCategory(category) {
+  if (category === "craft") return "hobbies";
   return QUEST_CATEGORIES.includes(category) ? category : "body";
 }
 
@@ -192,7 +194,8 @@ function allowedKindsForCategory(category) {
 
 function categoryLabel(category) {
   if (category === "mind") return "Mind";
-  if (category === "craft") return "Craft";
+  if (category === "hobbies") return "Hobbies";
+  if (category === "productivity") return "Productivity";
   return "Body";
 }
 
@@ -200,6 +203,15 @@ function unitLabel(kind) {
   if (kind === "distance") return "km";
   if (kind === "minutes") return "min";
   return "reps";
+}
+
+function categoryIconForName(name) {
+  const n = String(name || "").toLowerCase().trim();
+  if (/(strength|workout|fitness|body)/.test(n)) return IconDumbbell;
+  if (/(mindfulness|mind|focus|meditation)/.test(n)) return Brain;
+  if (/(hobby|hobbies|learning|study|reading|craft)/.test(n)) return IconBook;
+  if (/(productivity|productive|work)/.test(n)) return IconTrendingUp;
+  return IconTag;
 }
 
 function progressPct(currentTargetValue, sTargetValue) {
@@ -257,6 +269,8 @@ function normalizeQuest(q) {
   const sTargetValue = Number.isFinite(sTargetRaw) && sTargetRaw > 0 ? sTargetRaw : defaultSTargetValue({ name: q.name, unitType: safeUnitType, category });
   const baselineRaw = Number(q.lastTargetValue ?? q.baselineValue ?? currentTargetValue);
   const baselineValue = Number.isFinite(baselineRaw) ? baselineRaw : currentTargetValue;
+  const createdAtRaw = Number(q.createdAt ?? 0);
+  const createdAt = Number.isFinite(createdAtRaw) ? createdAtRaw : 0;
   const rawPriority = String(q.priority || (q.tier === "Side" ? "minor" : "main")).toLowerCase();
   const priority = rawPriority === "minor" ? "minor" : "main";
   const xpRaw = Number(q.xp ?? 0);
@@ -273,6 +287,7 @@ function normalizeQuest(q) {
     baselineValue,
     priority,
     xp,
+    createdAt,
   };
 }
 
@@ -602,6 +617,47 @@ function IconMoreVertical({ className = "" }) {
   );
 }
 
+function IconDumbbell({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 10v4" />
+      <path d="M6 9v6" />
+      <path d="M9 8v8" />
+      <path d="M15 8v8" />
+      <path d="M18 9v6" />
+      <path d="M21 10v4" />
+      <path d="M9 12h6" />
+    </svg>
+  );
+}
+
+function IconTrendingUp({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 17l6-6 4 4 7-7" />
+      <path d="M14 8h6v6" />
+    </svg>
+  );
+}
+
+function IconBook({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 5h6a3 3 0 0 1 3 3v11H7a3 3 0 0 0-3 3z" />
+      <path d="M20 5h-6a3 3 0 0 0-3 3v11h6a3 3 0 0 1 3 3z" />
+    </svg>
+  );
+}
+
+function IconTag({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 12l-8 8-8-8V4h8z" />
+      <circle cx="7.5" cy="7.5" r="1.5" />
+    </svg>
+  );
+}
+
 function BottomTabs({ tab, setTab, isDark }) {
   const items = [
     { id: "today", label: "Today", Icon: IconCheckCircle },
@@ -719,7 +775,8 @@ function TodayPanel({
   const categories = [
     { id: "body", label: "Body" },
     { id: "mind", label: "Mind" },
-    { id: "craft", label: "Craft" },
+    { id: "hobbies", label: "Hobbies" },
+    { id: "productivity", label: "Productivity" },
   ];
 
   return (
@@ -762,11 +819,20 @@ function TodayPanel({
 
           <div className="mt-4 space-y-4">
             {categories.map((cat) => {
-              const quests = state.quests.filter((q) => q.category === cat.id);
+              const quests = state.quests
+                .filter((q) => q.category === cat.id)
+                .sort((a, b) => {
+                  if (a.priority !== b.priority) return a.priority === "main" ? -1 : 1;
+                  return (b.createdAt || 0) - (a.createdAt || 0);
+                });
               if (!quests.length) return null;
+              const Icon = categoryIconForName(cat.label);
               return (
                 <div key={cat.id} className="space-y-2">
-                  <div className={cx("text-xs font-bold uppercase tracking-[0.2em]", textMuted)}>{cat.label}</div>
+                  <div className={cx("flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]", textMuted)}>
+                    <Icon className="h-4 w-4" />
+                    <span>{cat.label}</span>
+                  </div>
                   {quests.map((q) => {
                     const done = !!todays.completed?.[q.id]?.done;
                     const target = q.currentTargetValue;
@@ -1044,8 +1110,12 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
   const [categoryFilter, setCategoryFilter] = useState("all");
   const filterOptions = ["all", ...QUEST_CATEGORIES];
 
-  const filteredQuests =
-    categoryFilter === "all" ? state.quests : state.quests.filter((q) => q.category === categoryFilter);
+  const filteredQuests = (categoryFilter === "all" ? state.quests : state.quests.filter((q) => q.category === categoryFilter))
+    .slice()
+    .sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority === "main" ? -1 : 1;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -1115,6 +1185,14 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
                     </div>
                     <div className={cx("mt-1 text-xs", textMuted)}>
                       Current target: <span className={cx("font-bold", textSoft)}>{target} {unitLabel(q.unitType)}</span>
+                    </div>
+                    <div className={cx("mt-1 inline-flex items-center gap-2 text-xs", textMuted)}>
+                      {(() => {
+                        const Icon = categoryIconForName(q.category);
+                        return <Icon className="h-4 w-4" />;
+                      })()}
+                      <span className="font-semibold">{categoryLabel(q.category)}</span>
+                      <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Major"}</Pill>
                     </div>
                   </div>
                   <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
@@ -1555,7 +1633,10 @@ export default function LevelUpQuestBoard() {
   const [state, setState] = useState(() => {
     const saved = safeJsonParse(localStorage.getItem(STORAGE_KEY) || "", null);
     if (saved) {
-      const normalizedQuests = (saved.quests || DEFAULT_QUESTS).map(normalizeQuest);
+      const normalizedQuests = (saved.quests || DEFAULT_QUESTS).map((q) => {
+        const createdAt = typeof q.createdAt === "number" ? q.createdAt : 0;
+        return normalizeQuest({ ...q, createdAt });
+      });
       const xpFromDays = {};
       for (const entry of Object.values(saved.days || {})) {
         if (!entry?.completed) continue;
@@ -1854,10 +1935,10 @@ export default function LevelUpQuestBoard() {
     const unitType = "reps";
     const category = "body";
     const currentTargetValue = 10;
+    const createdAt = Date.now();
     setState((prev) => ({
       ...prev,
       quests: [
-        ...prev.quests,
         {
           id,
           name: "New Quest",
@@ -1866,9 +1947,11 @@ export default function LevelUpQuestBoard() {
           currentTargetValue,
           sTargetValue: defaultSTargetValue({ name: "New Quest", unitType, category }),
           baselineValue: currentTargetValue,
-          priority: "minor",
+          priority: "main",
           xp: 0,
+          createdAt,
         },
+        ...prev.quests,
       ],
     }));
   }
@@ -1904,7 +1987,12 @@ export default function LevelUpQuestBoard() {
       }
     }
 
-    const categoryProgress = { body: { progressPct: 0, rank: "E" }, mind: { progressPct: 0, rank: "E" }, craft: { progressPct: 0, rank: "E" } };
+    const categoryProgress = {
+      body: { progressPct: 0, rank: "E" },
+      mind: { progressPct: 0, rank: "E" },
+      hobbies: { progressPct: 0, rank: "E" },
+      productivity: { progressPct: 0, rank: "E" },
+    };
     for (const category of QUEST_CATEGORIES) {
       const list = state.quests.filter((q) => q.category === category);
       if (!list.length) continue;
