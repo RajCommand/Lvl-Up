@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
@@ -30,6 +30,7 @@ function fmtMinToHHMM(min) {
 export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, textMuted, Card }) {
   const [now, setNow] = useState(() => new Date());
   const [showAnalog, setShowAnalog] = useState(false);
+  const lastTapRef = useRef(0);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -89,6 +90,16 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
 
   const leftStrBig = `${leftH}h ${pad2(leftM)}m`;
   const onDoubleClick = () => setShowAnalog((v) => !v);
+  const onPointerUp = (e) => {
+    if (e.pointerType !== "touch") return;
+    const nowMs = Date.now();
+    if (nowMs - lastTapRef.current < 350) {
+      setShowAnalog((v) => !v);
+      lastTapRef.current = 0;
+      return;
+    }
+    lastTapRef.current = nowMs;
+  };
 
   const Wrapper = Card
     ? Card
@@ -101,13 +112,14 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-extrabold">Day Timer</div>
-          <div className={cx("mt-1 text-xs", textMuted)}>Double-click the left panel to switch views</div>
+          <div className={cx("mt-1 text-xs", textMuted)}>Double-click timer to switch views</div>
         </div>
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
         <div
           onDoubleClick={onDoubleClick}
+          onPointerUp={onPointerUp}
           className={cx(
             "relative flex items-center justify-center rounded-2xl border p-4",
             border,
