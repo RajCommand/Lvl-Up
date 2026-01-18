@@ -57,14 +57,14 @@ export default function Onboarding({ onComplete }) {
 
   useEffect(() => {
     if (step !== 2) return;
-    const fullText = "Player Name:";
+    const fullText = "Leveler Name:";
     let i = 0;
     setTypedLabel("");
     const timer = setInterval(() => {
       i += 1;
       setTypedLabel(fullText.slice(0, i));
       if (i >= fullText.length) clearInterval(timer);
-    }, 45);
+    }, 120);
     return () => clearInterval(timer);
   }, [step]);
 
@@ -164,22 +164,17 @@ export default function Onboarding({ onComplete }) {
           0% { opacity: 0; transform: translateY(10px) scale(0.98); }
           100% { opacity: 1; transform: translateY(0) scale(1); }
         }
-        @keyframes caretBlink {
-          0%, 49% { opacity: 1; }
-          50%, 100% { opacity: 0; }
-        }
         .animate-step-in { animation: stepIn 320ms ease both; }
         .animate-brand { animation: brandIn 520ms ease both; }
         .animate-subtitle { animation: brandIn 520ms ease 120ms both; }
         .animate-cta { animation: ctaIn 420ms ease 260ms both; }
-        .caret { animation: caretBlink 900ms step-end infinite; }
       `}</style>
 
       <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-5 pb-28">
         <div className="flex-1 overflow-y-auto">
           <div
             className={cx("min-h-full flex", contentAlignment)}
-            style={step <= 4 ? { paddingTop: "8vh" } : undefined}
+            style={step <= 4 ? { paddingTop: "14vh" } : undefined}
           >
             <div key={transitionKey} className="w-full animate-step-in">
               {step === 1 ? (
@@ -201,35 +196,40 @@ export default function Onboarding({ onComplete }) {
 
               {step === 2 ? (
                 <div className="text-center">
-                  <div className="flex flex-wrap items-center justify-center gap-3">
-                    <div className={cx("text-sm font-semibold", isDark ? "text-zinc-300" : "text-zinc-600")}> 
+                  <div
+                    className={cx(
+                      "mx-auto w-full max-w-md px-2"
+                    )}
+                  >
+                    <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-200" : "text-zinc-800")}>
                       <span className="font-mono">{typedLabel}</span>
-                      <span className="caret ml-1 font-mono">|</span>
                     </div>
-                    <input
-                      ref={nameInputRef}
-                      value={playerName}
-                      onChange={(e) => setPlayerName(e.target.value)}
-                      className={cx(
-                        "w-44 rounded-xl border px-3 py-2 text-sm",
-                        isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white"
-                      )}
-                      placeholder="Your name"
-                    />
+                    <div className="mt-3">
+                      <input
+                        ref={nameInputRef}
+                        value={playerName}
+                        onChange={(e) => setPlayerName(e.target.value)}
+                        className={cx(
+                          "w-full rounded-xl border px-3 py-2 text-sm",
+                          isDark ? "border-zinc-800 bg-zinc-950/20 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+                        )}
+                        placeholder="Your name"
+                      />
+                    </div>
                   </div>
                 </div>
               ) : null}
 
               {step === 3 ? (
                 <div className="text-center space-y-3">
-                  <div className="text-lg font-extrabold">Date of Birth</div>
+                  <div className="text-2xl font-extrabold">Date of Birth</div>
                   <input
                     ref={dobInputRef}
                     type="date"
                     value={dob}
                     onChange={(e) => setDob(e.target.value)}
                     className={cx(
-                      "mx-auto w-full max-w-sm rounded-2xl border px-4 py-3 text-sm",
+                      "mx-auto w-full max-w-md rounded-2xl border px-4 py-3 text-sm",
                       isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white"
                     )}
                   />
@@ -434,29 +434,44 @@ export default function Onboarding({ onComplete }) {
             })}
           </div>
           {step > 1 ? (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleBack}
+                className={cx(
+                  "rounded-full px-4 py-3 text-sm font-semibold transition",
+                  isDark ? "border border-zinc-700 bg-zinc-900 text-zinc-100" : "border border-zinc-200 bg-white text-zinc-900"
+                )}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleNext}
+                disabled={!canProceed}
+                className={cx(
+                  "flex-1 rounded-full px-5 py-3 text-sm font-semibold transition",
+                  isDark ? "bg-zinc-100 text-zinc-900 disabled:opacity-50" : "bg-zinc-900 text-white disabled:opacity-50",
+                  step === 1 ? "animate-cta" : ""
+                )}
+              >
+                {step === stepsTotal ? "Finish" : "Next"}
+              </button>
+            </div>
+          ) : (
             <button
               type="button"
-              onClick={handleBack}
+              onClick={handleNext}
+              disabled={!canProceed}
               className={cx(
-                "self-start text-sm font-semibold",
-                isDark ? "text-zinc-300" : "text-zinc-600"
+                "w-full rounded-full px-5 py-3 text-sm font-semibold transition",
+                isDark ? "bg-zinc-100 text-zinc-900 disabled:opacity-50" : "bg-zinc-900 text-white disabled:opacity-50",
+                step === 1 ? "animate-cta" : ""
               )}
             >
-              Back
+              {step === stepsTotal ? "Finish" : "Next"}
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={handleNext}
-            disabled={!canProceed}
-            className={cx(
-              "w-full rounded-full px-5 py-3 text-sm font-semibold transition",
-              isDark ? "bg-zinc-100 text-zinc-900 disabled:opacity-50" : "bg-zinc-900 text-white disabled:opacity-50",
-              step === 1 ? "animate-cta" : ""
-            )}
-          >
-            {step === stepsTotal ? "Finish" : "Next"}
-          </button>
+          )}
         </div>
       </div>
     </div>
