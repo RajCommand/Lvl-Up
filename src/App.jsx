@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Brain } from "lucide-react";
+import { Brain, ChevronDown, ChevronUp } from "lucide-react";
 import { DayTimerClock } from "./components/DayTimerClock";
 
 /**
@@ -204,6 +204,46 @@ function unitLabel(kind) {
   if (kind === "distance") return "km";
   if (kind === "minutes") return "min";
   return "reps";
+}
+
+const DOMAIN_COLORS = {
+  body: "#3B82F6",
+  mind: "#EF4444",
+  hobbies: "#22C55E",
+  productivity: "#EAB308",
+};
+
+function normalizeDomain(domain) {
+  const n = String(domain || "").toLowerCase().trim();
+  if (n === "hobby" || n === "craft") return "hobbies";
+  if (n === "work" || n === "productivity") return "productivity";
+  if (n === "mind") return "mind";
+  if (n === "body") return "body";
+  return n;
+}
+
+function hexToRgb(hex) {
+  const raw = String(hex || "").replace("#", "");
+  if (raw.length !== 6) return { r: 0, g: 0, b: 0 };
+  const r = parseInt(raw.slice(0, 2), 16);
+  const g = parseInt(raw.slice(2, 4), 16);
+  const b = parseInt(raw.slice(4, 6), 16);
+  return { r, g, b };
+}
+
+function rgba(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getDomainColor(domain) {
+  return DOMAIN_COLORS[normalizeDomain(domain)] || DOMAIN_COLORS.body;
+}
+
+function getDomainStyle(domain, isDark) {
+  const color = getDomainColor(domain);
+  const borderColor = rgba(color, isDark ? 0.26 : 0.16);
+  return { color, borderColor, textClass: "" };
 }
 
 function categoryIconForName(name) {
@@ -841,10 +881,11 @@ function TodayPanel({
                 });
               if (!quests.length) return null;
               const Icon = categoryIconForName(cat.label);
+              const headerColor = getDomainColor(cat.id);
               return (
                 <div key={cat.id} className="space-y-2">
-                  <div className={cx("flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]", textMuted)}>
-                    <Icon className="h-4 w-4" />
+                  <div className={cx("flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]", textMuted)} style={{ color: headerColor }}>
+                    <Icon className="h-4 w-4" style={{ color: headerColor }} />
                     <span>{cat.label}</span>
                   </div>
                   {quests.map((q) => {
@@ -861,25 +902,24 @@ function TodayPanel({
                     const award = Math.max(0, Math.min(rawAward, remaining));
                     const isCapped = remaining <= 0;
 
-                    const cardCls = done
-                      ? isDark
-                        ? "border-emerald-900/40 bg-emerald-900/20"
-                        : "border-emerald-200 bg-emerald-50"
-                      : isDark
-                      ? "border-zinc-800 bg-zinc-950/10"
-                      : "border-zinc-200 bg-white";
+                    const domainColor = getDomainColor(q.category);
+                    const borderColor = rgba(domainColor, isDark ? 0.35 : 0.18);
+                    const accentColor = rgba(domainColor, isDark ? 0.9 : 0.85);
+                    const titleColor = rgba(domainColor, isDark ? 0.95 : 0.85);
+                    const cardCls = isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white";
 
                     return (
                       <button
                         key={q.id}
                         onClick={() => toggleQuestDone(q.id)}
-                        className={cx("w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
+                        className={cx("relative w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
+                        style={{ borderColor, "--accent-color": accentColor }}
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <div className={cx("h-3 w-3 rounded-full", done ? "bg-emerald-500" : isDark ? "bg-zinc-700" : "bg-zinc-300")} />
-                              <div className="truncate text-sm font-extrabold">{q.name}</div>
+                              <div className="h-3 w-3 rounded-full" style={{ backgroundColor: accentColor }} />
+                              <div className="truncate text-sm font-extrabold" style={{ color: titleColor }}>{q.name}</div>
                               <Pill tone={rank === "S" || rank === "A" ? "good" : rank === "E" ? "warn" : "neutral"} isDark={isDark}>
                                 Rank {rank}
                               </Pill>
@@ -1116,6 +1156,7 @@ function CalendarPanel({
 
 function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, updateQuest, addQuest, deleteQuest }) {
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [expandedById, setExpandedById] = useState({});
   const filterOptions = ["all", ...QUEST_CATEGORIES];
 
   const filteredQuests = (categoryFilter === "all" ? state.quests : state.quests.filter((q) => q.category === categoryFilter))
@@ -1124,6 +1165,30 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
       if (a.priority !== b.priority) return a.priority === "main" ? -1 : 1;
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
+
+  function toggleExpanded(id) {
+    setExpandedById((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  function expandAll() {
+    const next = {};
+    filteredQuests.forEach((q) => {
+      next[q.id] = true;
+    });
+    setExpandedById(next);
+  }
+
+  function collapseAll() {
+    const next = {};
+    filteredQuests.forEach((q) => {
+      next[q.id] = false;
+    });
+    setExpandedById(next);
+  }
+
+  function ensureExpanded(id) {
+    setExpandedById((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
+  }
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -1141,12 +1206,23 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
         <div className="mt-3 flex flex-wrap gap-2">
           {filterOptions.map((opt) => {
             const active = categoryFilter === opt;
+            const domainColor = opt === "all" ? null : DOMAIN_COLORS[opt];
+            const activeStyle =
+              active && domainColor
+                ? {
+                    borderColor: domainColor,
+                    color: domainColor,
+                    boxShadow: `0 0 0 1px ${rgba(domainColor, 0.25)}`,
+                  }
+                : undefined;
             return (
               <Button
                 key={opt}
                 variant={active ? "default" : "outline"}
                 onClick={() => setCategoryFilter(opt)}
                 isDark={isDark}
+                className="transition-colors duration-150"
+                style={activeStyle}
               >
                 {opt === "all" ? "All" : categoryLabel(opt)}
               </Button>
@@ -1154,15 +1230,73 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
           })}
         </div>
 
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <Button variant="outline" onClick={expandAll} isDark={isDark}>
+            Expand all
+          </Button>
+          <Button variant="outline" onClick={collapseAll} isDark={isDark}>
+            Collapse all
+          </Button>
+        </div>
+
         <div className="mt-4 space-y-3">
           {filteredQuests.map((q) => {
             const target = q.currentTargetValue;
             const allowedKinds = allowedKindsForCategory(q.category);
+            const isExpanded = !!expandedById[q.id];
+            const domainStyle = getDomainStyle(q.category, isDark);
             return (
-              <div key={q.id} className={cx("rounded-2xl border p-3", border)}>
+              <div
+                key={q.id}
+                className={cx("rounded-2xl border p-3", border)}
+                style={{ borderColor: domainStyle.borderColor }}
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className="text-xs font-semibold uppercase tracking-[0.12em]"
+                        style={{ color: domainStyle.color }}
+                      >
+                        {categoryLabel(q.category)}
+                      </span>
+                      <div
+                        className="text-sm font-extrabold"
+                        style={{ color: rgba(domainStyle.color, isDark ? 0.85 : 0.7) }}
+                      >
+                        {q.name}
+                      </div>
+                    </div>
+                    <div className={cx("mt-1 text-xs", textMuted)}>
+                      Current target: <span className={cx("font-bold", textSoft)}>{target} {unitLabel(q.unitType)}</span>
+                    </div>
+                    {isExpanded ? (
+                      <div className={cx("mt-1 inline-flex items-center gap-2 text-xs", textMuted)}>
+                        {(() => {
+                          const Icon = categoryIconForName(q.category);
+                          return <Icon className="h-4 w-4" style={{ color: domainStyle.color }} />;
+                        })()}
+                        <span className="font-semibold" style={{ color: domainStyle.color }}>
+                          {categoryLabel(q.category)}
+                        </span>
+                        <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Major"}</Pill>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={() => toggleExpanded(q.id)} isDark={isDark}>
+                      {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </Button>
+                    <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+
+                {isExpanded ? (
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <div className={cx("text-xs font-semibold", textMuted)}>Domain</div>
                       <select
                         value={q.category}
                         onChange={(e) => {
@@ -1171,9 +1305,10 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
                           const nextUnitType = nextAllowed.includes(q.unitType) ? q.unitType : nextAllowed[0];
                           updateQuest(q.id, { category: nextCategory, unitType: nextUnitType });
                         }}
+                        onFocus={() => ensureExpanded(q.id)}
                         className={cx(
-                          "rounded-lg border px-2 py-1 text-xs font-semibold uppercase tracking-[0.12em]",
-                          isDark ? "border-zinc-800 bg-zinc-950/10 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+                          "mt-1 w-full rounded-xl border p-2 text-sm",
+                          isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
                         )}
                       >
                         {QUEST_CATEGORIES.map((cat) => (
@@ -1182,85 +1317,78 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
                           </option>
                         ))}
                       </select>
+                    </div>
+
+                    <div>
+                      <div className={cx("text-xs font-semibold", textMuted)}>Quest name</div>
                       <input
                         value={q.name}
                         onChange={(e) => updateQuest(q.id, { name: e.target.value })}
+                        onFocus={() => ensureExpanded(q.id)}
                         className={cx(
-                          "w-full rounded-lg border px-2 py-1 text-sm font-extrabold outline-none focus:ring-2",
+                          "mt-1 w-full rounded-xl border p-2 text-sm font-semibold outline-none focus:ring-2",
                           isDark ? "border-zinc-800 bg-zinc-950/10 focus:ring-zinc-100" : "border-zinc-200 bg-white focus:ring-zinc-900"
                         )}
                       />
                     </div>
-                    <div className={cx("mt-1 text-xs", textMuted)}>
-                      Current target: <span className={cx("font-bold", textSoft)}>{target} {unitLabel(q.unitType)}</span>
+
+                    <div>
+                      <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
+                      <select
+                        value={q.unitType}
+                        onChange={(e) => updateQuest(q.id, { unitType: normalizeUnitType(e.target.value) })}
+                        onFocus={() => ensureExpanded(q.id)}
+                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                      >
+                        {allowedKinds.includes("reps") ? <option value="reps">Reps</option> : null}
+                        {allowedKinds.includes("distance") ? <option value="distance">Distance (km)</option> : null}
+                        {allowedKinds.includes("minutes") ? <option value="minutes">Minutes</option> : null}
+                      </select>
                     </div>
-                    <div className={cx("mt-1 inline-flex items-center gap-2 text-xs", textMuted)}>
-                      {(() => {
-                        const Icon = categoryIconForName(q.category);
-                        return <Icon className="h-4 w-4" />;
-                      })()}
-                      <span className="font-semibold">{categoryLabel(q.category)}</span>
-                      <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Major"}</Pill>
+
+                    <div>
+                      <div className={cx("text-xs font-semibold", textMuted)}>Priority</div>
+                      <select
+                        value={q.priority}
+                        onChange={(e) => updateQuest(q.id, { priority: e.target.value })}
+                        onFocus={() => ensureExpanded(q.id)}
+                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                      >
+                        <option value="main">Main</option>
+                        <option value="minor">Minor</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className={cx("text-xs font-semibold", textMuted)}>Current Target</div>
+                      <input
+                        type="number"
+                        step={q.unitType === "distance" ? "0.1" : "1"}
+                        value={q.currentTargetValue}
+                        onChange={(e) => updateQuest(q.id, { currentTargetValue: Number(e.target.value) })}
+                        onFocus={() => ensureExpanded(q.id)}
+                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                      />
+                    </div>
+
+                    <div>
+                      <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
+                      <input
+                        type="number"
+                        step={q.unitType === "distance" ? "0.1" : "1"}
+                        value={q.sTargetValue}
+                        onChange={(e) => updateQuest(q.id, { sTargetValue: Number(e.target.value) })}
+                        onFocus={() => ensureExpanded(q.id)}
+                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
+                      />
+                    </div>
+
+                    <div className={cx("rounded-xl border p-3 text-xs", border)}>
+                      <div className={cx("text-[11px] font-semibold", textMuted)}>Baseline</div>
+                      <div className="mt-1 text-sm font-black">{q.baselineValue} {unitLabel(q.unitType)}</div>
                     </div>
                   </div>
-                  <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
-                    Delete
-                  </Button>
-                </div>
-
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
-                    <select
-                      value={q.unitType}
-                      onChange={(e) => updateQuest(q.id, { unitType: normalizeUnitType(e.target.value) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    >
-                      {allowedKinds.includes("reps") ? <option value="reps">Reps</option> : null}
-                      {allowedKinds.includes("distance") ? <option value="distance">Distance (km)</option> : null}
-                      {allowedKinds.includes("minutes") ? <option value="minutes">Minutes</option> : null}
-                    </select>
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Priority</div>
-                    <select
-                      value={q.priority}
-                      onChange={(e) => updateQuest(q.id, { priority: e.target.value })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    >
-                      <option value="main">Main</option>
-                      <option value="minor">Minor</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>Current Target</div>
-                    <input
-                      type="number"
-                      step={q.unitType === "distance" ? "0.1" : "1"}
-                      value={q.currentTargetValue}
-                      onChange={(e) => updateQuest(q.id, { currentTargetValue: Number(e.target.value) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
-                  </div>
-
-                  <div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
-                    <input
-                      type="number"
-                      step={q.unitType === "distance" ? "0.1" : "1"}
-                      value={q.sTargetValue}
-                      onChange={(e) => updateQuest(q.id, { sTargetValue: Number(e.target.value) })}
-                      className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                    />
-                  </div>
-
-                  <div className={cx("rounded-xl border p-3 text-xs", border)}>
-                    <div className={cx("text-[11px] font-semibold", textMuted)}>Baseline</div>
-                    <div className="mt-1 text-sm font-black">{q.baselineValue} {unitLabel(q.unitType)}</div>
-                  </div>
-                </div>
+                ) : null}
               </div>
             );
           })}

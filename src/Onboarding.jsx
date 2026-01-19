@@ -34,6 +34,29 @@ const PRESET_VALUES = {
   defaultDistance: { beginner: [1, 5], standard: [2, 10], hardcore: [5, 15] },
 };
 
+const DOMAIN_COLORS = {
+  body: "#3B82F6",
+  mind: "#EF4444",
+  hobbies: "#22C55E",
+  productivity: "#EAB308",
+};
+
+const colorForDomain = (domain) => DOMAIN_COLORS[String(domain || "").toLowerCase()] || "#9CA3AF";
+
+function hexToRgb(hex) {
+  const raw = String(hex || "").replace("#", "");
+  if (raw.length !== 6) return { r: 0, g: 0, b: 0 };
+  const r = parseInt(raw.slice(0, 2), 16);
+  const g = parseInt(raw.slice(2, 4), 16);
+  const b = parseInt(raw.slice(4, 6), 16);
+  return { r, g, b };
+}
+
+function rgba(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function presetForTask(task, presetId) {
   const name = String(task.name || "").toLowerCase();
   if (name.includes("push")) return PRESET_VALUES.push[presetId];
@@ -59,6 +82,7 @@ export default function Onboarding({ onComplete }) {
   const [globalDifficulty, setGlobalDifficulty] = useState("");
   const [transitionKey, setTransitionKey] = useState(0);
   const [typedLabel] = useState("Leveler Name");
+  const [focusedTaskId, setFocusedTaskId] = useState("");
   const nameInputRef = useRef(null);
   const dobInputRef = useRef(null);
 
@@ -315,6 +339,13 @@ export default function Onboarding({ onComplete }) {
                     {CATEGORY_OPTIONS.map((cat) => {
                       const active = selectedCategories.has(cat.id);
                       const info = categoryCards[cat.id];
+                      const domainColor = colorForDomain(cat.id);
+                      const activeStyle = active
+                        ? {
+                            borderColor: domainColor,
+                            boxShadow: `0 0 0 1px ${rgba(domainColor, 0.25)}`,
+                          }
+                        : undefined;
                       return (
                         <button
                           key={cat.id}
@@ -329,6 +360,7 @@ export default function Onboarding({ onComplete }) {
                               ? "border-zinc-800 bg-zinc-950/10"
                               : "border-zinc-200 bg-white"
                           )}
+                          style={activeStyle}
                         >
                           <img
                             src={info.image}
@@ -338,7 +370,12 @@ export default function Onboarding({ onComplete }) {
                               active ? "grayscale-0" : "grayscale"
                             )}
                           />
-                          <div className="mt-3 text-sm font-extrabold">{info.title}</div>
+                          <div
+                            className="mt-3 text-sm font-extrabold"
+                            style={{ color: active ? domainColor : isDark ? "rgba(255,255,255,0.85)" : "rgba(17,24,39,0.85)" }}
+                          >
+                            {info.title}
+                          </div>
                           <div className={cx("mt-1 text-xs", active ? "text-zinc-200" : isDark ? "text-zinc-400" : "text-zinc-600")}>
                             {info.subtitle}
                           </div>
@@ -366,14 +403,21 @@ export default function Onboarding({ onComplete }) {
                   <div className="space-y-8">
                     {Array.from(selectedCategories).map((catId) => {
                       const templates = TASK_TEMPLATES[catId] || [];
+                      const domainColor = colorForDomain(catId);
                       return (
                         <div key={catId} className="space-y-3">
-                          <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-100" : "text-zinc-900")}>
+                          <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-100" : "text-zinc-900")} style={{ color: domainColor }}>
                             {CATEGORY_OPTIONS.find((c) => c.id === catId)?.label || catId}
                           </div>
                           <div className="space-y-3">
                             {templates.map((t) => {
                               const active = selectedTasks.has(t.id);
+                              const selectedStyle = active
+                                ? {
+                                    borderColor: domainColor,
+                                    boxShadow: `0 0 0 1px ${rgba(domainColor, 0.25)}`,
+                                  }
+                                : undefined;
                               return (
                                 <button
                                   key={t.id}
@@ -389,8 +433,20 @@ export default function Onboarding({ onComplete }) {
                                       ? "border-zinc-800 bg-zinc-950/10 text-zinc-400"
                                       : "border-zinc-200 bg-white text-zinc-500"
                                   )}
+                                  style={selectedStyle}
                                 >
-                                  <div className={cx("text-sm font-semibold", active ? "text-zinc-50" : "")}>{t.name}</div>
+                                  <div
+                                    className="text-sm font-semibold"
+                                    style={{
+                                      color: active
+                                        ? domainColor
+                                        : isDark
+                                        ? "rgba(255,255,255,0.6)"
+                                        : "rgba(17,24,39,0.55)",
+                                    }}
+                                  >
+                                    {t.name}
+                                  </div>
                                 </button>
                               );
                             })}
@@ -460,9 +516,10 @@ export default function Onboarding({ onComplete }) {
                     {CATEGORY_OPTIONS.map((cat) => {
                       const list = selectedTaskList.filter((t) => t.category === cat.id);
                       if (!list.length) return null;
+                      const domainColor = colorForDomain(cat.id);
                       return (
                         <div key={cat.id} className="space-y-3">
-                          <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-100" : "text-zinc-900")}>
+                          <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-100" : "text-zinc-900")} style={{ color: domainColor }}>
                             {cat.label}
                           </div>
                           <div className="space-y-4">
@@ -470,6 +527,10 @@ export default function Onboarding({ onComplete }) {
                               const cfg = taskConfig[t.id] || {};
                               const currentValue = cfg.currentTargetValue ?? t.current;
                               const sValue = cfg.sTargetValue ?? t.s;
+                              const isFocused = focusedTaskId === t.id;
+                              const cardStyle = {
+                                borderColor: rgba(domainColor, isFocused ? 0.8 : 0.35),
+                              };
                               return (
                                 <div
                                   key={t.id}
@@ -477,10 +538,11 @@ export default function Onboarding({ onComplete }) {
                                     "rounded-2xl border p-4",
                                     isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white"
                                   )}
+                                  style={cardStyle}
                                 >
                                   <div className="flex flex-wrap items-start justify-between gap-3">
                                     <div>
-                                      <div className="text-sm font-extrabold">{t.name}</div>
+                                      <div className="text-sm font-extrabold" style={{ color: rgba(domainColor, 0.9) }}>{t.name}</div>
                                       <div className={cx("text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
                                         Unit: {unitLabel(t.unitType)}
                                       </div>
@@ -518,6 +580,8 @@ export default function Onboarding({ onComplete }) {
                                         step={t.unitType === "distance" ? "0.1" : "1"}
                                         value={currentValue}
                                         onChange={(e) => updateTaskConfig(t.id, "currentTargetValue", e.target.value)}
+                                        onFocus={() => setFocusedTaskId(t.id)}
+                                        onBlur={() => setFocusedTaskId("")}
                                         className={cx(
                                           "mt-1 w-full rounded-xl border p-2 text-sm",
                                           isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
@@ -532,6 +596,8 @@ export default function Onboarding({ onComplete }) {
                                         step={t.unitType === "distance" ? "0.1" : "1"}
                                         value={sValue}
                                         onChange={(e) => updateTaskConfig(t.id, "sTargetValue", e.target.value)}
+                                        onFocus={() => setFocusedTaskId(t.id)}
+                                        onBlur={() => setFocusedTaskId("")}
                                         className={cx(
                                           "mt-1 w-full rounded-xl border p-2 text-sm",
                                           isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
