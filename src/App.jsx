@@ -76,6 +76,19 @@ function formatDuration(minutes) {
   return `${h}:${pad2(m)}`;
 }
 
+function computeAge(dob) {
+  if (!dob) return null;
+  const parsed = new Date(dob);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - parsed.getFullYear();
+  const monthDiff = now.getMonth() - parsed.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < parsed.getDate())) {
+    age -= 1;
+  }
+  return Math.max(0, age);
+}
+
 function isWithinDayWindow(settings, now = new Date()) {
   const wakeMin = parseTimeToMinutes(settings.wakeTime);
   const bedRaw = parseTimeToMinutes(settings.bedTime);
@@ -830,47 +843,16 @@ function BottomTabs({ tab, setTab, isDark }) {
   );
 }
 
-function Header({ overallRank, overallProgressPctDisplay, isDark, textMuted, border, surface, setTab }) {
+function Header() {
   return (
     <div className="mb-6 flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-black tracking-tight">Level Up</h1>
-            <Pill tone={overallRank === "S" || overallRank === "A" ? "good" : overallRank === "E" ? "warn" : "neutral"} isDark={isDark}>
-              Rank {overallRank}
-            </Pill>
-          </div>
-          <div className={cx("mt-1 text-sm", textMuted)}>Performance-based rank</div>
-        </div>
-
-        <button
-          className={cx(
-            "inline-flex h-10 w-10 items-center justify-center rounded-full border transition",
-            isDark ? "border-zinc-800 bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200 bg-white hover:bg-zinc-50"
-          )}
-          onClick={() => setTab("settings")}
-          aria-label="Open settings"
-          title="Settings"
-        >
-          <IconGear className="h-5 w-5" />
-        </button>
-      </div>
-
-      <Card className="p-4" border={border} surface={surface}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold">Performance Progress</div>
-            <div className={cx("mt-1 text-sm", textMuted)}>{overallProgressPctDisplay}% toward S benchmarks</div>
-          </div>
-          <div className="w-full sm:w-1/2">
-            <ProgressBar value={overallProgressPctDisplay} max={100} isDark={isDark} />
           </div>
         </div>
-      </Card>
 
-      <div className="hidden sm:flex items-center justify-between">
-        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">System</div>
       </div>
     </div>
   );
@@ -880,6 +862,13 @@ function TodayPanel({
   state,
   todays,
   settings,
+  playerName,
+  playerAge,
+  playerPhoto,
+  onPhotoChange,
+  onOpenSettings,
+  overallRank,
+  totalXP,
   boss,
   bossDone,
   toggleQuestDone,
@@ -906,6 +895,80 @@ function TodayPanel({
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
+        <Card className="p-4" border={border} surface={surface}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 flex-1 gap-5">
+              <label
+                className={cx(
+                  "relative flex aspect-[2/3] w-32 cursor-pointer items-center justify-center overflow-hidden rounded-2xl border transition sm:w-36",
+                  border,
+                  isDark ? "bg-zinc-950/30" : "bg-zinc-100"
+                )}
+              >
+                {playerPhoto ? (
+                  <img src={playerPhoto} alt="Player portrait" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="text-center text-[11px] font-semibold text-zinc-500">
+                    <div className={cx("mx-auto mb-2 h-7 w-7 rounded-full", isDark ? "bg-zinc-800" : "bg-zinc-200")} />
+                    Add photo
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const result = typeof reader.result === "string" ? reader.result : "";
+                      if (result) onPhotoChange(result);
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                  className="hidden"
+                />
+              </label>
+
+              <div className="min-w-0 flex-1">
+                <div
+                  className={cx(
+                    "flex items-center justify-between gap-3 rounded-xl border px-3 py-2",
+                    isDark ? "border-zinc-800 bg-zinc-950/40" : "border-zinc-200 bg-zinc-50"
+                  )}
+                >
+                    <div className={cx("text-sm font-semibold uppercase tracking-[0.2em]", textMuted)}>Leveler</div>
+                  <button
+                    className={cx(
+                      "inline-flex h-8 w-8 items-center justify-center rounded-full border transition",
+                      isDark ? "border-zinc-800 bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200 bg-white hover:bg-zinc-50"
+                    )}
+                    onClick={onOpenSettings}
+                    aria-label="Open settings"
+                    title="Settings"
+                  >
+                    <IconGear className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-3 space-y-1">
+                  <div className={cx("text-sm font-semibold", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                    {playerName || "Unknown"}
+                  </div>
+                  <div className={cx("text-sm font-semibold", textMuted)}>
+                    {playerAge !== null ? `${playerAge} years` : "Unknown"}
+                  </div>
+                  <div className="pt-1">
+                    <Pill tone={overallRank === "S" || overallRank === "A" ? "good" : overallRank === "E" ? "warn" : "neutral"} isDark={isDark}>
+                      Rank {overallRank}
+                    </Pill>
+                  </div>
+                  <div className={cx("text-sm font-semibold", textMuted)}>Total XP: {totalXP}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+
         <DayTimerClock
           wakeTime={settings.wakeTime}
           bedTime={settings.bedTime}
@@ -1499,6 +1562,7 @@ function StatsPanel({
   overallRank,
   overallLevel,
   streakDays,
+  overallProgressPctDisplay,
   isDark,
   border,
   surface,
@@ -1520,6 +1584,18 @@ function StatsPanel({
       <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
         <div className="text-lg font-extrabold">Stats</div>
         <div className={cx("mt-1 text-sm", textMuted)}>Last 7 days XP</div>
+
+        <div className={cx("mt-4 rounded-2xl border p-4", border, surface)}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">Performance Progress</div>
+              <div className={cx("mt-1 text-sm", textMuted)}>{overallProgressPctDisplay}% toward S benchmarks</div>
+            </div>
+            <div className="w-full sm:w-1/2">
+              <ProgressBar value={overallProgressPctDisplay} max={100} isDark={isDark} />
+            </div>
+          </div>
+        </div>
 
         <div className="mt-4 grid grid-cols-7 gap-2">
           {bars.map((b) => {
@@ -2015,6 +2091,14 @@ export default function LevelUpQuestBoard() {
   }, [tab]);
 
   const settings = state.settings;
+  const [playerProfile] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return safeJsonParse(window.localStorage.getItem("playerProfile") || "", null);
+  });
+  const [playerPhoto, setPlayerPhoto] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem("playerPhoto") || "";
+  });
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [toastMessage, setToastMessage] = useState("");
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -2049,6 +2133,12 @@ export default function LevelUpQuestBoard() {
     const t = setInterval(() => setNowTick(Date.now()), 60000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!playerPhoto) return;
+    window.localStorage.setItem("playerPhoto", playerPhoto);
+  }, [playerPhoto]);
 
   useEffect(() => {
     if (!toastMessage) return undefined;
@@ -2103,6 +2193,8 @@ export default function LevelUpQuestBoard() {
   const overallRank = useMemo(() => rankFromProgressPct(overallProgressPct), [overallProgressPct]);
   const overallProgressPctDisplay = Math.round(overallProgressPct * 100);
   const overallLevel = Math.max(1, overallProgressPctDisplay);
+  const playerName = playerProfile?.name || "";
+  const playerAge = computeAge(playerProfile?.dob);
 
   const streakDays = useMemo(() => {
     let count = 0;
@@ -2182,6 +2274,7 @@ export default function LevelUpQuestBoard() {
   function resetAll() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("onboardingComplete", "false");
+      window.localStorage.removeItem("playerPhoto");
       window.location.reload();
       return;
     }
@@ -2436,13 +2529,6 @@ export default function LevelUpQuestBoard() {
   return (
     <Shell page={page}>
       <Header
-        overallRank={overallRank}
-        overallProgressPctDisplay={overallProgressPctDisplay}
-        isDark={isDark}
-        textMuted={textMuted}
-        border={border}
-        surface={surface}
-        setTab={setTab}
       />
 
       {tab === "today" ? (
@@ -2450,6 +2536,13 @@ export default function LevelUpQuestBoard() {
           state={state}
           todays={todays}
           settings={settings}
+          playerName={playerName}
+          playerAge={playerAge}
+          playerPhoto={playerPhoto}
+          onPhotoChange={setPlayerPhoto}
+          onOpenSettings={() => setTab("settings")}
+          overallRank={overallRank}
+          totalXP={state.totalXP}
           boss={boss}
           bossDone={bossDone}
           toggleQuestDone={attemptToggleQuestDone}
@@ -2503,6 +2596,7 @@ export default function LevelUpQuestBoard() {
           overallRank={overallRank}
           overallLevel={overallLevel}
           streakDays={streakDays}
+          overallProgressPctDisplay={overallProgressPctDisplay}
           isDark={isDark}
           border={border}
           surface={surface}

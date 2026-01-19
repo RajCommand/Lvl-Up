@@ -30,7 +30,8 @@ function fmtMinToHHMM(min) {
 export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, textMuted, Card }) {
   const [now, setNow] = useState(() => new Date());
   const [showAnalog, setShowAnalog] = useState(false);
-  const lastTapRef = useRef(0);
+  const [showLegend, setShowLegend] = useState(false);
+  const swipeStartRef = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -86,19 +87,23 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
   const ringBase = isDark ? "#27272a" : "#e4e4e7";
   const ringGreen = isDark ? "#10b981" : "#059669";
   const ringRed = isDark ? "#ef4444" : "#dc2626";
-  const lineColor = isDark ? "rgba(255,255,255,0.75)" : "rgba(39,39,42,0.75)";
+  const lineColor = isDark ? "#f4f4f5" : "#111827";
+  const lineWidth = 3;
+  const lineLen = r + 6;
 
   const leftStrBig = `${leftH}h ${pad2(leftM)}m`;
-  const onDoubleClick = () => setShowAnalog((v) => !v);
+  const onPointerDown = (e) => {
+    if (e.pointerType !== "touch" && e.pointerType !== "mouse") return;
+    swipeStartRef.current = { x: e.clientX, y: e.clientY };
+  };
   const onPointerUp = (e) => {
-    if (e.pointerType !== "touch") return;
-    const nowMs = Date.now();
-    if (nowMs - lastTapRef.current < 350) {
-      setShowAnalog((v) => !v);
-      lastTapRef.current = 0;
-      return;
-    }
-    lastTapRef.current = nowMs;
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+    setShowAnalog(dx < 0);
   };
 
   const Wrapper = Card
@@ -112,13 +117,45 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-extrabold">Day Timer</div>
-          <div className={cx("mt-1 text-xs", textMuted)}>Double-click timer to switch views</div>
+          <div className={cx("mt-1 text-xs", textMuted)}>Swipe to switch views</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAnalog(false)}
+            className={cx(
+              "h-2.5 w-8 rounded-full transition",
+              showAnalog
+                ? isDark
+                  ? "bg-zinc-800"
+                  : "bg-zinc-200"
+                : isDark
+                ? "bg-zinc-100"
+                : "bg-zinc-900"
+            )}
+            aria-label="Show time left view"
+          />
+          <button
+            type="button"
+            onClick={() => setShowAnalog(true)}
+            className={cx(
+              "h-2.5 w-8 rounded-full transition",
+              showAnalog
+                ? isDark
+                  ? "bg-zinc-100"
+                  : "bg-zinc-900"
+                : isDark
+                ? "bg-zinc-800"
+                : "bg-zinc-200"
+            )}
+            aria-label="Show timer face view"
+          />
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="mt-4 grid grid-cols-1 gap-4">
         <div
-          onDoubleClick={onDoubleClick}
+          onPointerDown={onPointerDown}
           onPointerUp={onPointerUp}
           className={cx(
             "relative flex items-center justify-center rounded-2xl border p-4",
@@ -130,6 +167,72 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
           aria-label="Toggle day timer view"
           title="Double-click to toggle"
         >
+          {!showAnalog ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowLegend((v) => !v)}
+                className={cx(
+                  "absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold",
+                  isDark ? "border-zinc-700 bg-zinc-900 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+                )}
+                aria-label="Explain time left view"
+                title="Explain timer"
+              >
+                i
+              </button>
+              {showLegend ? (
+                <div
+                  className={cx(
+                    "absolute right-3 top-12 z-10 w-52 rounded-xl border p-2 text-[11px]",
+                    isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+                  )}
+                >
+                  <div className="font-semibold">How the timer works</div>
+                  <div className="mt-1 text-[11px]">
+                    Timer starts at your wake time and ends at bedtime.
+                  </div>
+                  <div className="mt-1 text-[11px]">
+                    Tasks completed after the timer ends will not be accepted (sleep time).
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {showAnalog ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowLegend((v) => !v)}
+                className={cx(
+                  "absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold",
+                  isDark ? "border-zinc-700 bg-zinc-900 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+                )}
+                aria-label="Explain day timer colors"
+                title="Explain colors"
+              >
+                i
+              </button>
+              {showLegend ? (
+                <div
+                  className={cx(
+                    "absolute right-3 top-12 z-10 w-48 rounded-xl border p-2 text-[11px]",
+                    isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
+                  )}
+                >
+                  <div className="font-semibold">What the colors mean</div>
+                  <div className="mt-1 text-[11px]">
+                    <div><span className="font-semibold">Green</span>: time left in your day window.</div>
+                    <div><span className="font-semibold">Red</span>: time elapsed in your day window.</div>
+                    <div><span className="font-semibold">Gray</span>: hours outside your day window.</div>
+                  </div>
+                  <div className={cx("mt-2 text-[10px]", textMuted)}>
+                    This is a 24h split, not a clock face.
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : null}
           {!showAnalog ? (
             <div className="text-center">
               <div className={cx("text-xs font-semibold", textMuted)}>Time left</div>
@@ -170,23 +273,23 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
                 </g>
               </svg>
 
-              <div className="absolute left-1/2 top-1/2" style={{ width: 0, height: 0, transform: `rotate(${wakeAngle}deg)` }}>
+              <div className="absolute left-1/2 top-1/2" style={{ width: 0, height: 0, transform: `rotate(${wakeAngle}deg)`, zIndex: 2 }}>
                 <div
                   style={{
-                    width: 2,
-                    height: r + 4,
+                    width: lineWidth,
+                    height: lineLen,
                     background: lineColor,
-                    transform: `translateX(-1px) translateY(-${r + 4}px)`,
+                    transform: `translateX(-${lineWidth / 2}px) translateY(-${lineLen}px)`,
                   }}
                 />
               </div>
-              <div className="absolute left-1/2 top-1/2" style={{ width: 0, height: 0, transform: `rotate(${bedAngle}deg)` }}>
+              <div className="absolute left-1/2 top-1/2" style={{ width: 0, height: 0, transform: `rotate(${bedAngle}deg)`, zIndex: 2 }}>
                 <div
                   style={{
-                    width: 2,
-                    height: r + 4,
+                    width: lineWidth,
+                    height: lineLen,
                     background: lineColor,
-                    transform: `translateX(-1px) translateY(-${r + 4}px)`,
+                    transform: `translateX(-${lineWidth / 2}px) translateY(-${lineLen}px)`,
                   }}
                 />
               </div>
@@ -199,34 +302,6 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
               />
             </div>
           )}
-        </div>
-
-        <div className={cx("rounded-2xl border p-4", border, isDark ? "bg-zinc-950/10" : "bg-white")}>
-          <div className="grid grid-cols-2 gap-3">
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-[11px] font-semibold", textMuted)}>Wake time</div>
-              <div className="mt-1 text-sm font-black tabular-nums">{wakeTime}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-[11px] font-semibold", textMuted)}>Bed time</div>
-              <div className="mt-1 text-sm font-black tabular-nums">{bedTime}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-[11px] font-semibold", textMuted)}>Sleep (goal)</div>
-              <div className="mt-1 text-sm font-black tabular-nums">{sleepHours.toFixed(1)} h</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-[11px] font-semibold", textMuted)}>Daytime</div>
-              <div className="mt-1 text-sm font-black tabular-nums">{dayHours.toFixed(1)} h</div>
-            </div>
-          </div>
-
-          <div className={cx("mt-3 text-xs", textMuted)}>
-            Now:{" "}
-            <span className={cx("font-semibold tabular-nums", isDark ? "text-zinc-100" : "text-zinc-900")}>
-              {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </span>
-          </div>
         </div>
       </div>
     </Wrapper>
