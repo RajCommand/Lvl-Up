@@ -15,6 +15,39 @@ function unitLabel(unitType) {
   return "reps";
 }
 
+const PRESET_LABELS = [
+  { id: "beginner", label: "Beginner" },
+  { id: "standard", label: "Standard" },
+  { id: "hardcore", label: "Hardcore" },
+];
+
+const PRESET_VALUES = {
+  push: { beginner: [5, 50], standard: [10, 100], hardcore: [20, 150] },
+  pull: { beginner: [1, 15], standard: [5, 30], hardcore: [10, 40] },
+  run: { beginner: [1, 5], standard: [2, 10], hardcore: [5, 15] },
+  medit: { beginner: [5, 20], standard: [10, 30], hardcore: [20, 60] },
+  focus: { beginner: [15, 60], standard: [30, 120], hardcore: [60, 240] },
+  read: { beginner: [10, 30], standard: [20, 60], hardcore: [45, 120] },
+  study: { beginner: [30, 90], standard: [60, 180], hardcore: [90, 240] },
+  defaultMinutes: { beginner: [10, 30], standard: [20, 60], hardcore: [40, 120] },
+  defaultReps: { beginner: [5, 50], standard: [10, 100], hardcore: [20, 150] },
+  defaultDistance: { beginner: [1, 5], standard: [2, 10], hardcore: [5, 15] },
+};
+
+function presetForTask(task, presetId) {
+  const name = String(task.name || "").toLowerCase();
+  if (name.includes("push")) return PRESET_VALUES.push[presetId];
+  if (name.includes("pull")) return PRESET_VALUES.pull[presetId];
+  if (name.includes("run") || name.includes("jog")) return PRESET_VALUES.run[presetId];
+  if (name.includes("medit")) return PRESET_VALUES.medit[presetId];
+  if (name.includes("focus") || name.includes("no-phone")) return PRESET_VALUES.focus[presetId];
+  if (name.includes("read")) return PRESET_VALUES.read[presetId];
+  if (name.includes("study") || name.includes("learn")) return PRESET_VALUES.study[presetId];
+  if (task.unitType === "distance") return PRESET_VALUES.defaultDistance[presetId];
+  if (task.unitType === "minutes") return PRESET_VALUES.defaultMinutes[presetId];
+  return PRESET_VALUES.defaultReps[presetId];
+}
+
 export default function Onboarding({ onComplete }) {
   const [step, setStep] = useState(1);
   const [playerName, setPlayerName] = useState("");
@@ -22,10 +55,10 @@ export default function Onboarding({ onComplete }) {
   const [selectedCategories, setSelectedCategories] = useState(() => new Set());
   const [selectedTasks, setSelectedTasks] = useState(() => new Set());
   const [taskConfig, setTaskConfig] = useState({});
+  const [difficultyByTask, setDifficultyByTask] = useState({});
+  const [globalDifficulty, setGlobalDifficulty] = useState("");
   const [transitionKey, setTransitionKey] = useState(0);
   const [typedLabel] = useState("Leveler Name");
-  const [openCategories, setOpenCategories] = useState(() => new Set());
-
   const nameInputRef = useRef(null);
   const dobInputRef = useRef(null);
 
@@ -87,12 +120,6 @@ export default function Onboarding({ onComplete }) {
     if (step === 3) dobInputRef.current?.focus();
   }, [step]);
 
-  useEffect(() => {
-    if (step === 5) {
-      setOpenCategories(new Set(selectedCategories));
-    }
-  }, [step, selectedCategories]);
-
   function toggleCategory(id) {
     setSelectedCategories((prev) => {
       const next = new Set(prev);
@@ -111,20 +138,35 @@ export default function Onboarding({ onComplete }) {
     });
   }
 
-  function toggleCategoryOpen(id) {
-    setOpenCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   function updateTaskConfig(id, field, value) {
     setTaskConfig((prev) => ({
       ...prev,
       [id]: { ...prev[id], [field]: value },
     }));
+  }
+
+  function applyPreset(task, presetId) {
+    const [cVal, sVal] = presetForTask(task, presetId);
+    updateTaskConfig(task.id, "currentTargetValue", cVal);
+    updateTaskConfig(task.id, "sTargetValue", sVal);
+  }
+
+  function setTaskDifficulty(task, presetId) {
+    setDifficultyByTask((prev) => ({ ...prev, [task.id]: presetId }));
+    setGlobalDifficulty("");
+    applyPreset(task, presetId);
+  }
+
+  function setAllDifficulties(presetId) {
+    setGlobalDifficulty(presetId);
+    setDifficultyByTask((prev) => {
+      const next = { ...prev };
+      selectedTaskList.forEach((task) => {
+        next[task.id] = presetId;
+      });
+      return next;
+    });
+    selectedTaskList.forEach((task) => applyPreset(task, presetId));
   }
 
   function handleNext() {
@@ -135,8 +177,10 @@ export default function Onboarding({ onComplete }) {
     const createdAt = Date.now();
     const quests = selectedTaskList.map((t, idx) => {
       const cfg = taskConfig[t.id] || {};
-      const currentTargetValue = Number(cfg.currentTargetValue ?? t.current ?? 1);
-      const sTargetValue = Number(cfg.sTargetValue ?? t.s ?? currentTargetValue);
+      const currentRaw = Number(cfg.currentTargetValue ?? t.current ?? 1);
+      const sRaw = Number(cfg.sTargetValue ?? t.s ?? currentRaw);
+      const currentTargetValue = Math.max(1, Number.isFinite(currentRaw) ? currentRaw : 1);
+      const sTargetValue = Math.max(currentTargetValue, Number.isFinite(sRaw) ? sRaw : currentTargetValue);
       return {
         id: `q_${t.id}_${createdAt + idx}`,
         name: t.name,
@@ -261,7 +305,7 @@ export default function Onboarding({ onComplete }) {
               {step === 4 ? (
                 <div className="text-center space-y-4">
                   <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
-                    Choose Your Domains
+                    Choose Your Domains.
                   </div>
                   <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-300" : "text-zinc-600")}>
                     <div>Choose what you want to level up.</div>
@@ -298,22 +342,6 @@ export default function Onboarding({ onComplete }) {
                           <div className={cx("mt-1 text-xs", active ? "text-zinc-200" : isDark ? "text-zinc-400" : "text-zinc-600")}>
                             {info.subtitle}
                           </div>
-                          <div
-                            className={cx(
-                              "absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full border",
-                              active
-                                ? isDark
-                                  ? "border-zinc-100"
-                                  : "border-white"
-                                : isDark
-                                ? "border-zinc-700"
-                                : "border-zinc-200"
-                            )}
-                          >
-                            {active ? (
-                              <div className={cx("h-2.5 w-2.5 rounded-full", isDark ? "bg-zinc-100" : "bg-white")} />
-                            ) : null}
-                          </div>
                         </button>
                       );
                     })}
@@ -325,117 +353,195 @@ export default function Onboarding({ onComplete }) {
               ) : null}
 
               {step === 5 ? (
-                <div className="space-y-4">
-                  <div className="sticky top-0 z-10 -mx-5 px-5 pb-2 pt-1" style={{ background: isDark ? "rgba(9,9,11,0.8)" : "rgba(248,250,252,0.9)", backdropFilter: "blur(10px)" }}>
-                    <div className="text-center text-lg font-extrabold">Choose Starter Tasks</div>
+                <div className="space-y-6">
+                  <div className="text-center space-y-3">
+                    <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                      Choose Your Quests
+                    </div>
+                    <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-400" : "text-zinc-500")}>
+                      Select preexisting domain specific quests. You can add your own quests later.
+                    </div>
                   </div>
-                  {Array.from(selectedCategories).map((catId) => {
-                    const templates = TASK_TEMPLATES[catId] || [];
-                    const open = openCategories.has(catId);
-                    return (
-                      <div key={catId} className={cx("rounded-2xl border", isDark ? "border-zinc-800" : "border-zinc-200")}> 
-                        <button
-                          type="button"
-                          onClick={() => toggleCategoryOpen(catId)}
-                          className={cx(
-                            "flex w-full items-center justify-between px-4 py-3 text-left",
-                            isDark ? "text-zinc-100" : "text-zinc-900"
-                          )}
-                        >
-                          <div className="text-sm font-extrabold">{CATEGORY_OPTIONS.find((c) => c.id === catId)?.label || catId}</div>
-                          <span className={cx("text-xs transition", open ? "rotate-90" : "")}>{">"}</span>
-                        </button>
-                        {open ? (
-                          <div className="space-y-1 px-4 pb-3">
-                            {templates.map((t) => (
-                              <label
-                                key={t.id}
-                                className={cx(
-                                  "flex items-center justify-between rounded-xl px-2 py-2",
-                                  isDark ? "hover:bg-zinc-900/40" : "hover:bg-zinc-100"
-                                )}
-                              >
-                                <span className="text-sm font-semibold">{t.name}</span>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedTasks.has(t.id)}
-                                  onChange={() => toggleTask(t.id)}
-                                  className={cx("h-4 w-4", isDark ? "accent-zinc-100" : "accent-zinc-900")}
-                                />
-                              </label>
-                            ))}
+
+                  <div className="space-y-8">
+                    {Array.from(selectedCategories).map((catId) => {
+                      const templates = TASK_TEMPLATES[catId] || [];
+                      return (
+                        <div key={catId} className="space-y-3">
+                          <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-100" : "text-zinc-900")}>
+                            {CATEGORY_OPTIONS.find((c) => c.id === catId)?.label || catId}
                           </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
+                          <div className="space-y-3">
+                            {templates.map((t) => {
+                              const active = selectedTasks.has(t.id);
+                              return (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={() => toggleTask(t.id)}
+                                  className={cx(
+                                    "w-full rounded-2xl border px-4 py-4 text-left transition",
+                                    active
+                                      ? isDark
+                                        ? "border-zinc-100 bg-zinc-900 text-zinc-50"
+                                        : "border-zinc-900 bg-zinc-900 text-white"
+                                      : isDark
+                                      ? "border-zinc-800 bg-zinc-950/10 text-zinc-400"
+                                      : "border-zinc-200 bg-white text-zinc-500"
+                                  )}
+                                >
+                                  <div className={cx("text-sm font-semibold", active ? "text-zinc-50" : "")}>{t.name}</div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {!selectedTaskList.length ? (
+                    <div className={cx("text-center text-xs", isDark ? "text-zinc-400" : "text-zinc-500")}>
+                      Select at least one quest to continue.
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
               {step === 6 ? (
                 <div className="space-y-4">
-                  <div className="text-center text-lg font-extrabold">Configure Targets</div>
-                  <div className="space-y-3">
-                    {selectedTaskList.map((t) => {
-                      const cfg = taskConfig[t.id] || {};
-                      const currentValue = cfg.currentTargetValue ?? t.current;
-                      const sValue = cfg.sTargetValue ?? t.s;
+                  <div className="text-center space-y-3">
+                    <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                      Set Your Goals
+                    </div>
+                    <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-400" : "text-zinc-500")}>
+                      Set your current level and your S-rank goal. You can always adjust this later.
+                    </div>
+                  </div>
+
+                  <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
+                    <div className="text-sm font-extrabold">Not sure yet?</div>
+                    <div className={cx("mt-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                      Keep the defaults for now. Start today, then fine-tune your goals anytime in Settings.
+                    </div>
+                  </div>
+                  <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
+                    <div className="text-sm font-extrabold">Choose your difficulty</div>
+                    <div className={cx("mt-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                      Set everything to Beginner, Standard, or Hardcore — or choose individual difficulty per quest.
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {PRESET_LABELS.map((preset) => {
+                        const active = globalDifficulty === preset.id;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => setAllDifficulties(preset.id)}
+                            className={cx(
+                              "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                              active
+                                ? isDark
+                                  ? "border-zinc-100 bg-zinc-100 text-zinc-900"
+                                  : "border-zinc-900 bg-zinc-900 text-white"
+                                : isDark
+                                ? "border-zinc-700 bg-zinc-900 text-zinc-200"
+                                : "border-zinc-200 bg-white text-zinc-700"
+                            )}
+                          >
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-8">
+                    {CATEGORY_OPTIONS.map((cat) => {
+                      const list = selectedTaskList.filter((t) => t.category === cat.id);
+                      if (!list.length) return null;
                       return (
-                        <div
-                          key={t.id}
-                          className={cx(
-                            "rounded-2xl border p-4",
-                            isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white"
-                          )}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="text-sm font-extrabold">{t.name}</div>
-                              <div className={cx("text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>Unit: {unitLabel(t.unitType)}</div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateTaskConfig(t.id, "currentTargetValue", t.current);
-                                updateTaskConfig(t.id, "sTargetValue", t.s);
-                              }}
-                              className={cx(
-                                "rounded-full border px-3 py-1 text-[11px] font-semibold",
-                                isDark ? "border-zinc-700 text-zinc-200" : "border-zinc-200 text-zinc-700"
-                              )}
-                            >
-                              Default
-                            </button>
+                        <div key={cat.id} className="space-y-3">
+                          <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-100" : "text-zinc-900")}>
+                            {cat.label}
                           </div>
-                          <div className="mt-3 grid grid-cols-2 gap-3">
-                            <label className="text-xs font-semibold">
-                              Current
-                              <input
-                                type="number"
-                                min="1"
-                                step={t.unitType === "distance" ? "0.1" : "1"}
-                                value={currentValue}
-                                onChange={(e) => updateTaskConfig(t.id, "currentTargetValue", e.target.value)}
-                                className={cx(
-                                  "mt-1 w-full rounded-xl border p-2 text-sm",
-                                  isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                                )}
-                              />
-                            </label>
-                            <label className="text-xs font-semibold">
-                              S Target
-                              <input
-                                type="number"
-                                min="1"
-                                step={t.unitType === "distance" ? "0.1" : "1"}
-                                value={sValue}
-                                onChange={(e) => updateTaskConfig(t.id, "sTargetValue", e.target.value)}
-                                className={cx(
-                                  "mt-1 w-full rounded-xl border p-2 text-sm",
-                                  isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                                )}
-                              />
-                            </label>
+                          <div className="space-y-4">
+                            {list.map((t) => {
+                              const cfg = taskConfig[t.id] || {};
+                              const currentValue = cfg.currentTargetValue ?? t.current;
+                              const sValue = cfg.sTargetValue ?? t.s;
+                              return (
+                                <div
+                                  key={t.id}
+                                  className={cx(
+                                    "rounded-2xl border p-4",
+                                    isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white"
+                                  )}
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                      <div className="text-sm font-extrabold">{t.name}</div>
+                                      <div className={cx("text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                                        Unit: {unitLabel(t.unitType)}
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {PRESET_LABELS.map((preset) => (
+                                        <button
+                                          key={preset.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setTaskDifficulty(t, preset.id);
+                                          }}
+                                          className={cx(
+                                            "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                                            difficultyByTask[t.id] === preset.id
+                                              ? isDark
+                                                ? "border-zinc-100 bg-zinc-100 text-zinc-900"
+                                                : "border-zinc-900 bg-zinc-900 text-white"
+                                              : isDark
+                                              ? "border-zinc-700 bg-zinc-900 text-zinc-200"
+                                              : "border-zinc-200 bg-white text-zinc-700"
+                                          )}
+                                        >
+                                          {preset.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 grid grid-cols-2 gap-3">
+                                    <label className="text-xs font-semibold">
+                                      Current level
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step={t.unitType === "distance" ? "0.1" : "1"}
+                                        value={currentValue}
+                                        onChange={(e) => updateTaskConfig(t.id, "currentTargetValue", e.target.value)}
+                                        className={cx(
+                                          "mt-1 w-full rounded-xl border p-2 text-sm",
+                                          isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                        )}
+                                      />
+                                    </label>
+                                    <label className="text-xs font-semibold">
+                                      S-rank goal
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step={t.unitType === "distance" ? "0.1" : "1"}
+                                        value={sValue}
+                                        onChange={(e) => updateTaskConfig(t.id, "sTargetValue", e.target.value)}
+                                        className={cx(
+                                          "mt-1 w-full rounded-xl border p-2 text-sm",
+                                          isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                        )}
+                                      />
+                                    </label>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );
