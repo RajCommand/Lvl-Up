@@ -60,7 +60,7 @@ const PRESET_VALUES = {
   defaultDistance: { beginner: [1, 5], standard: [2, 10], hardcore: [5, 15] },
 };
 
-const TERMS_TITLE = "Set Your Terms";
+const TERMS_TITLE = "Set Your Terms.";
 
 const DOMAIN_COLORS = {
   body: "#3B82F6",
@@ -204,7 +204,7 @@ export default function Onboarding({ onComplete }) {
   const [selectedTasks, setSelectedTasks] = useState(() => new Set());
   const [taskConfig, setTaskConfig] = useState({});
   const [difficultyByTask, setDifficultyByTask] = useState({});
-  const [globalDifficulty, setGlobalDifficulty] = useState("");
+  const [globalDifficulty, setGlobalDifficulty] = useState("standard");
   const [transitionKey, setTransitionKey] = useState(0);
   const [typedLabel] = useState("Leveler Name:");
   const [focusedTaskId, setFocusedTaskId] = useState("");
@@ -273,6 +273,13 @@ export default function Onboarding({ onComplete }) {
   useEffect(() => {
     setTransitionKey((v) => v + 1);
   }, [step]);
+
+  useEffect(() => {
+    if (step !== 6) return;
+    if (!selectedTaskList.length) return;
+    if (Object.keys(difficultyByTask).length) return;
+    setAllDifficulties("standard");
+  }, [step, selectedTaskList, difficultyByTask]);
 
   useEffect(() => {
     if (step === 2) nameInputRef.current?.focus();

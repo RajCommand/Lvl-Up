@@ -2007,6 +2007,13 @@ export default function LevelUpQuestBoard() {
     return buildDefaultState();
   });
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    const scroller = document.scrollingElement;
+    if (scroller) scroller.scrollTop = 0;
+  }, [tab]);
+
   const settings = state.settings;
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [toastMessage, setToastMessage] = useState("");
