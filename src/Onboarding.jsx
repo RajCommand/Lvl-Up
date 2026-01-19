@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CATEGORY_OPTIONS, TASK_TEMPLATES } from "./onboarding/taskTemplates.js";
 import mindPic from "./assets/onboardingpics/mind1pic.jpeg";
 import hobbiesPic from "./assets/onboardingpics/hobbies1pic.jpeg";
@@ -118,6 +118,7 @@ export default function Onboarding({ onComplete }) {
   const [agreementChecked, setAgreementChecked] = useState(false);
   const nameInputRef = useRef(null);
   const dobInputRef = useRef(null);
+  const scrollContainerRef = useRef(null);
 
   const stepsTotal = 7;
   const isDark = typeof window !== "undefined" && window.matchMedia
@@ -175,18 +176,23 @@ export default function Onboarding({ onComplete }) {
 
   useEffect(() => {
     if (step === 2) nameInputRef.current?.focus();
-    if (step === 3) dobInputRef.current?.focus();
   }, [step]);
 
   function openDobPicker() {
     const el = dobInputRef.current;
     if (!el) return;
-    if (typeof el.showPicker === "function") el.showPicker();
-    else {
-      el.focus();
-      el.click();
-    }
+    const trigger = () => {
+      if (typeof el.showPicker === "function") el.showPicker();
+      else el.click();
+    };
+    requestAnimationFrame(trigger);
   }
+
+  useLayoutEffect(() => {
+    scrollContainerRef.current?.scrollTo?.({ top: 0, left: 0, behavior: "instant" });
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [step]);
 
   function toggleCategory(id) {
     setSelectedCategories((prev) => {
@@ -310,7 +316,7 @@ export default function Onboarding({ onComplete }) {
       `}</style>
 
       <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-5 pb-28">
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overscroll-contain">
           <div
             className={cx("min-h-full flex", contentAlignment)}
             style={step <= 4 ? { paddingTop: "14vh" } : undefined}
@@ -369,7 +375,7 @@ export default function Onboarding({ onComplete }) {
               {step === 3 ? (
                 <div className="text-center space-y-3">
                   <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
-                    Date of Birth
+                    Date of Birth.
                   </div>
                   <div className="mx-auto w-full max-w-md px-2 min-w-0">
                     <div
@@ -410,7 +416,7 @@ export default function Onboarding({ onComplete }) {
                       const domainColor = colorForDomain(cat.id);
                       const activeStyle = active
                         ? {
-                            borderColor: domainColor,
+                            borderColor: isDark ? "#ffffff" : "#000000",
                             boxShadow: `0 0 0 1px ${rgba(domainColor, 0.25)}`,
                           }
                         : undefined;
@@ -422,7 +428,7 @@ export default function Onboarding({ onComplete }) {
                             "relative flex h-full max-w-full flex-col overflow-hidden rounded-2xl border p-3 transition",
                             active
                               ? isDark
-                                ? "border-zinc-100 bg-zinc-900 text-zinc-50"
+                                ? "border-zinc-100 bg-white text-zinc-900"
                                 : "border-zinc-900 bg-zinc-900 text-white"
                               : isDark
                               ? "border-zinc-800 bg-zinc-950/10"
@@ -443,7 +449,10 @@ export default function Onboarding({ onComplete }) {
                               {info.title}
                             </div>
                             <div
-                              className={cx("mt-1 text-xs", active ? "text-zinc-200" : isDark ? "text-zinc-400" : "text-zinc-600")}
+                              className={cx(
+                                "mt-1 text-xs",
+                                active ? (isDark ? "text-zinc-600" : "text-zinc-200") : isDark ? "text-zinc-400" : "text-zinc-600"
+                              )}
                               style={{
                                 display: "-webkit-box",
                                 WebkitLineClamp: 2,
