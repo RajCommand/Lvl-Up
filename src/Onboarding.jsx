@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CATEGORY_OPTIONS, TASK_TEMPLATES } from "./onboarding/taskTemplates.js";
+import mindPic from "./assets/onboardingpics/mind1pic.jpeg";
+import hobbiesPic from "./assets/onboardingpics/hobbies1pic.jpeg";
+import bodyPic from "./assets/onboardingpics/body1pic.jpeg";
+import productivityPic from "./assets/onboardingpics/Productivity1pic.jpeg";
 
 function cx(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -19,7 +23,7 @@ export default function Onboarding({ onComplete }) {
   const [selectedTasks, setSelectedTasks] = useState(() => new Set());
   const [taskConfig, setTaskConfig] = useState({});
   const [transitionKey, setTransitionKey] = useState(0);
-  const [typedLabel, setTypedLabel] = useState("");
+  const [typedLabel] = useState("Leveler Name");
   const [openCategories, setOpenCategories] = useState(() => new Set());
 
   const nameInputRef = useRef(null);
@@ -29,6 +33,29 @@ export default function Onboarding({ onComplete }) {
   const isDark = typeof window !== "undefined" && window.matchMedia
     ? window.matchMedia("(prefers-color-scheme: dark)").matches
     : false;
+
+  const categoryCards = useMemo(() => ({
+    body: {
+      title: "Body",
+      subtitle: "Physical strength and endurance",
+      image: bodyPic,
+    },
+    mind: {
+      title: "Mind",
+      subtitle: "Focus, calm, and awareness",
+      image: mindPic,
+    },
+    hobbies: {
+      title: "Hobbies",
+      subtitle: "Skills, learning, and creation",
+      image: hobbiesPic,
+    },
+    productivity: {
+      title: "Productivity",
+      subtitle: "Execution and daily discipline",
+      image: productivityPic,
+    },
+  }), []);
 
   const selectedTaskList = useMemo(() => {
     const tasks = [];
@@ -53,19 +80,6 @@ export default function Onboarding({ onComplete }) {
 
   useEffect(() => {
     setTransitionKey((v) => v + 1);
-  }, [step]);
-
-  useEffect(() => {
-    if (step !== 2) return;
-    const fullText = "Leveler Name:";
-    let i = 0;
-    setTypedLabel("");
-    const timer = setInterval(() => {
-      i += 1;
-      setTypedLabel(fullText.slice(0, i));
-      if (i >= fullText.length) clearInterval(timer);
-    }, 120);
-    return () => clearInterval(timer);
   }, [step]);
 
   useEffect(() => {
@@ -156,8 +170,8 @@ export default function Onboarding({ onComplete }) {
           0% { opacity: 0; transform: translateY(12px); }
           100% { opacity: 1; transform: translateY(0); }
         }
-        @keyframes brandIn {
-          0% { opacity: 0; transform: translateY(8px); }
+        @keyframes softFade {
+          0% { opacity: 0; transform: translateY(6px); }
           100% { opacity: 1; transform: translateY(0); }
         }
         @keyframes ctaIn {
@@ -165,9 +179,9 @@ export default function Onboarding({ onComplete }) {
           100% { opacity: 1; transform: translateY(0) scale(1); }
         }
         .animate-step-in { animation: stepIn 320ms ease both; }
-        .animate-brand { animation: brandIn 520ms ease both; }
-        .animate-subtitle { animation: brandIn 520ms ease 120ms both; }
-        .animate-cta { animation: ctaIn 420ms ease 260ms both; }
+        .animate-logo { animation: softFade 1.5s ease both; }
+        .animate-subtitle { animation: softFade 1s ease 1.5s both; }
+        .animate-cta { animation: ctaIn 1.2s ease 2.6s both; }
       `}</style>
 
       <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-5 pb-28">
@@ -186,7 +200,7 @@ export default function Onboarding({ onComplete }) {
                     )}
                     style={{ textShadow: isDark ? "0 0 22px rgba(255,255,255,0.12)" : "0 0 18px rgba(0,0,0,0.08)" }}
                   >
-                    <span className="animate-brand">Level Up.</span>
+                    <span className="animate-logo">Level Up.</span>
                   </div>
                   <div className={cx("mt-3 text-sm", isDark ? "text-zinc-300" : "text-zinc-600")}> 
                     <span className="animate-subtitle">Turn habits into quests. Progress by leveling up.</span>
@@ -201,9 +215,15 @@ export default function Onboarding({ onComplete }) {
                       "mx-auto w-full max-w-md px-2"
                     )}
                   >
-                    <div className={cx("text-2xl font-extrabold", isDark ? "text-zinc-200" : "text-zinc-800")}>
-                      <span className="font-mono">{typedLabel}</span>
-                    </div>
+                  <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                    <span>
+                      {typedLabel}
+                      <span className="ml-3 inline-flex flex-col items-center gap-2 align-middle">
+                        <span className={cx("h-2.5 w-2.5 rounded-full", isDark ? "bg-zinc-50" : "bg-zinc-900")} />
+                        <span className={cx("h-2.5 w-2.5 rounded-full", isDark ? "bg-zinc-50" : "bg-zinc-900")} />
+                      </span>
+                    </span>
+                  </div>
                     <div className="mt-3">
                       <input
                         ref={nameInputRef}
@@ -222,7 +242,9 @@ export default function Onboarding({ onComplete }) {
 
               {step === 3 ? (
                 <div className="text-center space-y-3">
-                  <div className="text-2xl font-extrabold">Date of Birth</div>
+                  <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                    Date of Birth
+                  </div>
                   <input
                     ref={dobInputRef}
                     type="date"
@@ -237,17 +259,24 @@ export default function Onboarding({ onComplete }) {
               ) : null}
 
               {step === 4 ? (
-                <div className="text-center space-y-6">
-                  <div className="text-lg font-extrabold">Choose Categories</div>
-                  <div className="grid grid-cols-2 gap-4">
+                <div className="text-center space-y-4">
+                  <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                    Choose Your Domains
+                  </div>
+                  <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-300" : "text-zinc-600")}>
+                    <div>Choose what you want to level up.</div>
+                    <div>You can change this anytime.</div>
+                  </div>
+                  <div className="mt-6 grid grid-cols-2 gap-4 text-left">
                     {CATEGORY_OPTIONS.map((cat) => {
                       const active = selectedCategories.has(cat.id);
+                      const info = categoryCards[cat.id];
                       return (
                         <button
                           key={cat.id}
                           onClick={() => toggleCategory(cat.id)}
                           className={cx(
-                            "relative rounded-2xl border p-4 text-left transition",
+                            "relative overflow-hidden rounded-2xl border p-3 transition",
                             active
                               ? isDark
                                 ? "border-zinc-100 bg-zinc-900 text-zinc-50"
@@ -257,7 +286,18 @@ export default function Onboarding({ onComplete }) {
                               : "border-zinc-200 bg-white"
                           )}
                         >
-                          <div className="text-sm font-extrabold">{cat.label}</div>
+                          <img
+                            src={info.image}
+                            alt={info.title}
+                            className={cx(
+                              "aspect-square w-full rounded-xl object-cover transition",
+                              active ? "grayscale-0" : "grayscale"
+                            )}
+                          />
+                          <div className="mt-3 text-sm font-extrabold">{info.title}</div>
+                          <div className={cx("mt-1 text-xs", active ? "text-zinc-200" : isDark ? "text-zinc-400" : "text-zinc-600")}>
+                            {info.subtitle}
+                          </div>
                           <div
                             className={cx(
                               "absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full border",
@@ -277,6 +317,9 @@ export default function Onboarding({ onComplete }) {
                         </button>
                       );
                     })}
+                  </div>
+                  <div className={cx("pt-2 text-xs", isDark ? "text-zinc-400" : "text-zinc-500")}>
+                    Progress begins with a choice.
                   </div>
                 </div>
               ) : null}
@@ -413,7 +456,7 @@ export default function Onboarding({ onComplete }) {
         style={{ paddingBottom: "calc(12px + env(safe-area-inset-bottom))" }}
       >
         <div className="mx-auto flex max-w-2xl flex-col gap-3 px-5 py-3">
-          <div className="flex items-center justify-center gap-2">
+          <div className={cx("flex items-center justify-center gap-2", step === 1 ? "animate-cta" : "")}>
             {Array.from({ length: stepsTotal }).map((_, idx) => {
               const active = idx + 1 <= step;
               return (
