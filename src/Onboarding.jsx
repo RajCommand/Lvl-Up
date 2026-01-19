@@ -60,6 +60,8 @@ const PRESET_VALUES = {
   defaultDistance: { beginner: [1, 5], standard: [2, 10], hardcore: [5, 15] },
 };
 
+const TERMS_TITLE = "Set Your Terms";
+
 const DOMAIN_COLORS = {
   body: "#3B82F6",
   mind: "#EF4444",
@@ -97,6 +99,103 @@ function presetForTask(task, presetId) {
   return PRESET_VALUES.defaultReps[presetId];
 }
 
+function SignaturePad({ isDark, onSignedChange }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const resize = () => {
+      const height = 180;
+      const width = canvas.parentElement ? canvas.parentElement.clientWidth : canvas.clientWidth;
+      canvas.width = Math.max(1, width || 1);
+      canvas.height = height;
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = isDark ? "#e4e4e7" : "#111827";
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [isDark]);
+
+  const startDraw = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? 0) - rect.left;
+    const y = (e.clientY ?? 0) - rect.top;
+    drawingRef.current = true;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    onSignedChange(true);
+  };
+
+  const draw = (e) => {
+    if (!drawingRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? 0) - rect.left;
+    const y = (e.clientY ?? 0) - rect.top;
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const endDraw = () => {
+    drawingRef.current = false;
+  };
+
+  const clearPad = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    onSignedChange(false);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div
+        className={cx(
+          "rounded-2xl border p-3",
+          isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+        )}
+      >
+        <canvas
+          ref={canvasRef}
+          className="h-[180px] w-full touch-none"
+          onPointerDown={startDraw}
+          onPointerMove={draw}
+          onPointerUp={endDraw}
+          onPointerLeave={endDraw}
+        />
+      </div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={clearPad}
+          className={cx(
+            "rounded-full px-4 py-2 text-xs font-semibold transition",
+            isDark ? "border border-zinc-700 bg-zinc-900 text-zinc-100" : "border border-zinc-200 bg-white text-zinc-900"
+          )}
+        >
+          Clear
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Onboarding({ onComplete }) {
   const [step, setStep] = useState(1);
   const [playerName, setPlayerName] = useState("");
@@ -116,6 +215,7 @@ export default function Onboarding({ onComplete }) {
   const [noPhonePenaltyEnabled, setNoPhonePenaltyEnabled] = useState(false);
   const [noPhonePenaltyMinutes, setNoPhonePenaltyMinutes] = useState(60);
   const [agreementChecked, setAgreementChecked] = useState(false);
+  const [hasSigned, setHasSigned] = useState(false);
   const nameInputRef = useRef(null);
   const dobInputRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -166,9 +266,9 @@ export default function Onboarding({ onComplete }) {
     if (step === 3) return dob.trim().length > 0;
     if (step === 4) return selectedCategories.size > 0;
     if (step === 5) return selectedTaskList.length > 0;
-    if (step === 7) return agreementChecked;
+    if (step === 7) return agreementChecked && hasSigned;
     return true;
-  }, [step, playerName, dob, selectedCategories, selectedTaskList, agreementChecked]);
+  }, [step, playerName, dob, selectedCategories, selectedTaskList, agreementChecked, hasSigned]);
 
   useEffect(() => {
     setTransitionKey((v) => v + 1);
@@ -511,7 +611,7 @@ export default function Onboarding({ onComplete }) {
                                     "w-full rounded-2xl border px-4 py-4 text-left transition",
                                     active
                                       ? isDark
-                                        ? "border-zinc-100 bg-zinc-900 text-zinc-50"
+                                        ? "border-zinc-100 bg-white text-zinc-900"
                                         : "border-zinc-900 bg-zinc-900 text-white"
                                       : isDark
                                       ? "border-zinc-800 bg-zinc-950/10 text-zinc-400"
@@ -704,17 +804,19 @@ export default function Onboarding({ onComplete }) {
                 <div className="space-y-4">
                   <div className="text-center space-y-3">
                     <div className={cx("text-5xl sm:text-6xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
-                      Rules of the Game
+                      {TERMS_TITLE}
                     </div>
                     <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-400" : "text-zinc-500")}>
-                      Your progress only counts inside your day window. You can change this anytime.
+                      Configure your daily window and optional discipline guardrails. You can change this anytime.
                     </div>
                   </div>
 
                   <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
                     <div className="text-sm font-extrabold">Daily Time Window</div>
-                    <div className={cx("mt-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
-                      Choose your wake and bed times.
+                    <div className={cx("mt-1 space-y-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                      <div>Set the time window when progress counts.</div>
+                      <div>The timer follows your schedule even if you wake up late.</div>
+                      <div>Only completions inside this window earn XP.</div>
                     </div>
                     <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                       <div>
@@ -742,7 +844,7 @@ export default function Onboarding({ onComplete }) {
                         />
                       </div>
                     </div>
-                    <div className={cx("mt-3 text-xs", isDark ? "text-zinc-300" : "text-zinc-600")}>
+                    <div className={cx("mt-3 rounded-xl border p-3 text-xs font-semibold", isDark ? "border-zinc-800 bg-zinc-950/10 text-zinc-200" : "border-zinc-200 bg-zinc-50 text-zinc-700")}>
                       You have {formatWindow(dayWindowMinutes(wakeTime, bedTime))} each day to complete quests.
                     </div>
                     <div className={cx("mt-2 rounded-xl border p-3 text-xs", isDark ? "border-zinc-800 bg-zinc-950/10 text-zinc-400" : "border-zinc-200 bg-zinc-50 text-zinc-600")}>
@@ -752,11 +854,18 @@ export default function Onboarding({ onComplete }) {
 
                   <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
                     <div className="text-sm font-extrabold">XP Debt + Punishments</div>
-                    <div className={cx("mt-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
-                      Optional guardrails for discipline.
+                    <div className={cx("mt-1 space-y-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                      <div>Optional guardrails to reduce procrastination.</div>
+                      <div>Missed quests or off-window completions can generate XP debt.</div>
+                      <div>Example: a no-phone window (max 4 hours) as a personal consequence.</div>
                     </div>
-                    <div className="mt-3 flex items-center justify-between">
-                      <div className="text-xs font-semibold">Enable XP Debt</div>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold">Enable XP Debt</div>
+                        <div className={cx("mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                          Track debt and enforce guardrails when days are missed.
+                        </div>
+                      </div>
                       <label className="inline-flex cursor-pointer items-center gap-2">
                         <input
                           type="checkbox"
@@ -795,7 +904,7 @@ export default function Onboarding({ onComplete }) {
                         <div className={cx("rounded-xl border p-3", isDark ? "border-zinc-800" : "border-zinc-200")}>
                           <div className="flex items-center justify-between gap-3">
                             <div>
-                              <div className="text-xs font-semibold">No-phone penalty</div>
+                              <div className="text-xs font-semibold">No-phone punishment window (max 4 hours)</div>
                               <div className={cx("mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-zinc-600")}>
                                 If you miss quests, you owe a no-phone session the next day.
                               </div>
@@ -832,6 +941,18 @@ export default function Onboarding({ onComplete }) {
                         </div>
                       </div>
                     ) : null}
+                  </div>
+
+                  <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
+                    <div className="text-sm font-extrabold">Player Contract</div>
+                    <div className={cx("mt-2 space-y-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                      <div>This is for your own motivation and accountability.</div>
+                      <div>You can cheat the system by marking quests complete, but this is a commitment to yourself.</div>
+                      <div>Signatures are NOT saved; they reset when you leave onboarding.</div>
+                    </div>
+                    <div className="mt-4">
+                      <SignaturePad isDark={isDark} onSignedChange={setHasSigned} />
+                    </div>
                   </div>
 
                   <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
