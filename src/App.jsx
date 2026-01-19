@@ -50,6 +50,41 @@ function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
 
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function parseTimeToMinutes(str) {
+  if (!str || typeof str !== "string") return 0;
+  const [hRaw, mRaw] = str.split(":");
+  const h = clamp(Number(hRaw || 0), 0, 23);
+  const m = clamp(Number(mRaw || 0), 0, 59);
+  return h * 60 + m;
+}
+
+function dayWindowMinutes(wakeTime, bedTime) {
+  const wakeMin = parseTimeToMinutes(wakeTime);
+  const bedRaw = parseTimeToMinutes(bedTime);
+  const bedMin = bedRaw <= wakeMin ? bedRaw + 1440 : bedRaw;
+  return Math.max(1, bedMin - wakeMin);
+}
+
+function formatDuration(minutes) {
+  const total = Math.max(0, Math.round(minutes));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${h}:${pad2(m)}`;
+}
+
+function isWithinDayWindow(settings, now = new Date()) {
+  const wakeMin = parseTimeToMinutes(settings.wakeTime);
+  const bedRaw = parseTimeToMinutes(settings.bedTime);
+  const bedMin = bedRaw <= wakeMin ? bedRaw + 1440 : bedRaw;
+  let nowMin = now.getHours() * 60 + now.getMinutes();
+  if (nowMin < wakeMin) nowMin += 1440;
+  return nowMin >= wakeMin && nowMin <= bedMin;
+}
+
 function today() {
   return new Date();
 }
@@ -132,7 +167,10 @@ const DEFAULT_QUESTS = [
 const DEFAULT_SETTINGS = {
   themeMode: "system", // system | dark | light
   hardcore: false,
-  penaltyMode: "xp_debt", // xp_debt | cooldown
+  xpDebtEnabled: false,
+  blockAfterBedtime: true,
+  noPhonePenaltyEnabled: false,
+  noPhonePenaltyMinutes: 60,
   streakBonusPctPerDay: 1,
   maxStreakBonusPct: 20,
   weeklyBossEnabled: true,
@@ -342,7 +380,7 @@ function buildDefaultState({ settings = DEFAULT_SETTINGS, quests = DEFAULT_QUEST
   return {
     quests: normalizedQuests,
     settings: { ...DEFAULT_SETTINGS, ...settings },
-    days: { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "" } },
+    days: { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false } },
     totalXP,
     lastActiveDate: key,
     cooldownUntil: null,
@@ -411,7 +449,7 @@ function ProgressBar({ value, max, isDark }) {
   );
 }
 
-function Modal({ open, title, onClose, children, isDark, border, surface, textMuted }) {
+function Modal({ open, title, onClose, children, isDark, border, surface, textMuted, showClose = true, showHint = true }) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e) => {
@@ -425,25 +463,57 @@ function Modal({ open, title, onClose, children, isDark, border, surface, textMu
 
   return (
     <div className="fixed inset-0 z-50" onMouseDown={() => onClose?.()} role="presentation">
-      <div className={cx("absolute inset-0", isDark ? "bg-black/60" : "bg-black/40")} />
+      <style>{`
+        @keyframes modalFadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes modalOverlayIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+      `}</style>
+      <div
+        className={cx("absolute inset-0 backdrop-blur-sm", isDark ? "bg-black/60" : "bg-black/40")}
+        style={{ animation: "modalOverlayIn 160ms ease" }}
+      />
       <div className="absolute inset-0 flex items-center justify-center p-4">
         <div
           role="dialog"
           aria-modal="true"
           onMouseDown={(e) => e.stopPropagation()}
           className={cx("w-full max-w-lg rounded-2xl border shadow-xl", border, surface)}
+          style={{ animation: "modalFadeIn 180ms ease" }}
         >
           <div className={cx("flex items-center justify-between gap-3 border-b p-4", border)}>
             <div className="min-w-0">
               <div className="truncate text-sm font-extrabold">{title}</div>
-              <div className={cx("mt-0.5 text-xs", textMuted)}>Click outside or press Esc to close</div>
+              {showHint ? <div className={cx("mt-0.5 text-xs", textMuted)}>Click outside or press Esc to close</div> : null}
             </div>
-            <Button variant="outline" onClick={onClose} isDark={isDark}>
-              Close
-            </Button>
+            {showClose ? (
+              <Button variant="outline" onClick={onClose} isDark={isDark}>
+                Close
+              </Button>
+            ) : null}
           </div>
           <div className="p-4">{children}</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function Toast({ message, isDark }) {
+  if (!message) return null;
+  return (
+    <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+      <div
+        className={cx(
+          "rounded-full px-4 py-2 text-xs font-semibold shadow-lg",
+          isDark ? "bg-zinc-100 text-zinc-900" : "bg-zinc-900 text-white"
+        )}
+      >
+        {message}
       </div>
     </div>
   );
@@ -814,7 +884,7 @@ function TodayPanel({
   bossDone,
   toggleQuestDone,
   toggleBossDone,
-  setPenaltyMode,
+  isWithinWindowNow,
   isDark,
   border,
   surface,
@@ -859,15 +929,26 @@ function TodayPanel({
             </Pill>
           </div>
 
-          {debt > 0 ? (
+          {debt > 0 && settings.xpDebtEnabled ? (
             <div
               className={cx(
                 "mt-3 rounded-xl border p-3 text-sm",
                 isDark ? "border-amber-900/40 bg-amber-900/20 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
               )}
             >
-              <div className="font-semibold">XP Debt:</div>
+              <div className="font-semibold">XP Debt active</div>
               <div>{debt} XP must be repaid before rewards apply.</div>
+            </div>
+          ) : null}
+          {settings.blockAfterBedtime && !isWithinWindowNow ? (
+            <div
+              className={cx(
+                "mt-3 rounded-xl border p-3 text-sm",
+                isDark ? "border-red-900/40 bg-red-900/20 text-red-100" : "border-red-200 bg-red-50 text-red-900"
+              )}
+            >
+              <div className="font-semibold">Outside time window</div>
+              <div>Completions will not count until your wake-to-bed window is active.</div>
             </div>
           ) : null}
 
@@ -1555,7 +1636,10 @@ function StatsPanel({
   );
 }
 
-function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll, setWeeklyBossEnabled, setPenaltyMode, setState }) {
+function SettingsPanel({ settings, isDark, border, surface, textMuted, requestReset, setWeeklyBossEnabled, setState }) {
+  const totalWindowMinutes = dayWindowMinutes(settings.wakeTime, settings.bedTime);
+  const totalWindowLabel = formatDuration(totalWindowMinutes);
+
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
@@ -1667,25 +1751,114 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
           </div>
 
           <div className={cx("rounded-2xl border p-4", border)}>
-            <div className="text-sm font-extrabold">Penalty Mode</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button variant={settings.penaltyMode === "xp_debt" ? "default" : "outline"} onClick={() => setPenaltyMode("xp_debt")} isDark={isDark}>
-                XP Debt
-              </Button>
-              <Button variant={settings.penaltyMode === "cooldown" ? "default" : "outline"} onClick={() => setPenaltyMode("cooldown")} isDark={isDark}>
-                Cooldown
-              </Button>
+            <div className="text-sm font-extrabold">XP Debt + Punishments</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>
+              When enabled, missed quests add XP debt and optional consequences.
             </div>
-            <div className={cx("mt-2 text-xs", textMuted)}>
-              {settings.penaltyMode === "xp_debt"
-                ? "Missed days add XP debt that must be repaid before rewards apply."
-                : "Missed days trigger a 24h cooldown (bonus XP disabled)."}
+            <div className="mt-3 flex items-center justify-between">
+              <div className="text-sm font-semibold">Enable XP Debt</div>
+              <label className="inline-flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.xpDebtEnabled}
+                  onChange={(e) =>
+                    setState((p) => ({
+                      ...p,
+                      settings: {
+                        ...p.settings,
+                        xpDebtEnabled: e.target.checked,
+                        blockAfterBedtime: e.target.checked ? true : p.settings.blockAfterBedtime,
+                      },
+                    }))
+                  }
+                  className="h-4 w-4"
+                />
+                <span className="text-sm font-semibold">{settings.xpDebtEnabled ? "On" : "Off"}</span>
+              </label>
             </div>
+
+            {settings.xpDebtEnabled ? (
+              <div className="mt-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold">Block quest completion after bedtime</div>
+                    <div className={cx("mt-1 text-[11px]", textMuted)}>
+                      After bedtime, quests cannot be marked complete until next day.
+                    </div>
+                  </div>
+                  <label className="inline-flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={settings.blockAfterBedtime}
+                      onChange={(e) =>
+                        setState((p) => ({
+                          ...p,
+                          settings: { ...p.settings, blockAfterBedtime: e.target.checked },
+                        }))
+                      }
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm font-semibold">{settings.blockAfterBedtime ? "On" : "Off"}</span>
+                  </label>
+                </div>
+
+                <div className={cx("rounded-xl border p-3", border)}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold">No-phone penalty</div>
+                      <div className={cx("mt-1 text-[11px]", textMuted)}>
+                        If you miss quests, you owe a no-phone session the next day.
+                      </div>
+                    </div>
+                    <label className="inline-flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={settings.noPhonePenaltyEnabled}
+                        onChange={(e) =>
+                          setState((p) => ({
+                            ...p,
+                            settings: { ...p.settings, noPhonePenaltyEnabled: e.target.checked },
+                          }))
+                        }
+                        className="h-4 w-4"
+                      />
+                      <span className="text-sm font-semibold">{settings.noPhonePenaltyEnabled ? "On" : "Off"}</span>
+                    </label>
+                  </div>
+                  {settings.noPhonePenaltyEnabled ? (
+                    <div className="mt-3">
+                      <div className={cx("text-xs font-semibold", textMuted)}>Duration</div>
+                      <select
+                        value={settings.noPhonePenaltyMinutes}
+                        onChange={(e) =>
+                          setState((p) => ({
+                            ...p,
+                            settings: { ...p.settings, noPhonePenaltyMinutes: Number(e.target.value) },
+                          }))
+                        }
+                        className={cx(
+                          "mt-1 w-full rounded-xl border p-2 text-sm",
+                          isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                        )}
+                      >
+                        <option value={30}>30m</option>
+                        <option value={60}>1h</option>
+                        <option value={120}>2h</option>
+                        <option value={180}>3h</option>
+                        <option value={240}>4h</option>
+                      </select>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className={cx("rounded-2xl border p-4", border)}>
             <div className="text-sm font-extrabold">Day Timer</div>
-            <div className={cx("mt-1 text-xs", textMuted)}>Configure wake + bed times. (Shown on Today.)</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>
+              Configure your wake + bed times. Tasks must be completed inside this window to count.
+            </div>
 
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
@@ -1726,7 +1899,10 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
             </div>
 
             <div className={cx("mt-2 text-xs", textMuted)}>
-              If bed time is earlier than wake time, it's treated as next day.
+              Total active window: <span className="font-semibold">{totalWindowLabel}</span> hours to complete quests.
+            </div>
+            <div className={cx("mt-1 text-xs", textMuted)}>
+              If bed time is earlier than wake time, it's treated as next day. Tasks completed outside the window do not count.
             </div>
           </div>
 
@@ -1734,7 +1910,7 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, resetAll,
             <div className="text-sm font-extrabold">Danger Zone</div>
             <div className={cx("mt-2 text-xs", textMuted)}>Reset wipes your progress and quests.</div>
             <div className="mt-3">
-              <Button variant="danger" onClick={resetAll} isDark={isDark}>
+              <Button variant="danger" onClick={requestReset} isDark={isDark}>
                 Reset Everything
               </Button>
             </div>
@@ -1787,11 +1963,42 @@ export default function LevelUpQuestBoard() {
       const totalXP = quests.reduce((sum, q) => sum + (q.xp || 0), 0);
       const savedSettings = saved.settings || {};
       const themeMode = savedSettings.themeMode || savedSettings.theme || DEFAULT_SETTINGS.themeMode;
-      const days = saved.days && Object.keys(saved.days).length ? saved.days : { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "" } };
+      const xpDebtEnabled =
+        typeof savedSettings.xpDebtEnabled === "boolean"
+          ? savedSettings.xpDebtEnabled
+          : savedSettings.penaltyMode === "xp_debt"
+          ? true
+          : DEFAULT_SETTINGS.xpDebtEnabled;
+      const blockAfterBedtime =
+        typeof savedSettings.blockAfterBedtime === "boolean"
+          ? savedSettings.blockAfterBedtime
+          : xpDebtEnabled
+          ? true
+          : DEFAULT_SETTINGS.blockAfterBedtime;
+      const noPhonePenaltyMinutes =
+        typeof savedSettings.noPhonePenaltyMinutes === "number"
+          ? savedSettings.noPhonePenaltyMinutes
+          : DEFAULT_SETTINGS.noPhonePenaltyMinutes;
+      const noPhonePenaltyEnabled =
+        typeof savedSettings.noPhonePenaltyEnabled === "boolean"
+          ? savedSettings.noPhonePenaltyEnabled
+          : DEFAULT_SETTINGS.noPhonePenaltyEnabled;
+      const days =
+        saved.days && Object.keys(saved.days).length
+          ? saved.days
+          : { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false } };
       return {
         quests,
         totalXP,
-        settings: { ...DEFAULT_SETTINGS, ...savedSettings, themeMode },
+        settings: {
+          ...DEFAULT_SETTINGS,
+          ...savedSettings,
+          themeMode,
+          xpDebtEnabled,
+          blockAfterBedtime,
+          noPhonePenaltyEnabled,
+          noPhonePenaltyMinutes,
+        },
         days,
         lastActiveDate: saved.lastActiveDate || key,
         cooldownUntil: saved.cooldownUntil || null,
@@ -1801,6 +2008,9 @@ export default function LevelUpQuestBoard() {
   });
 
   const settings = state.settings;
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const [toastMessage, setToastMessage] = useState("");
+  const [resetModalOpen, setResetModalOpen] = useState(false);
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
     if (typeof window === "undefined" || !window.matchMedia) return true;
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -1828,13 +2038,24 @@ export default function LevelUpQuestBoard() {
     };
   }, []);
 
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (!toastMessage) return undefined;
+    const t = setTimeout(() => setToastMessage(""), 2400);
+    return () => clearTimeout(t);
+  }, [toastMessage]);
+
   // Ensure today's entry exists + handle missed days penalties
   useEffect(() => {
     setState((prev) => {
       const next = { ...prev, days: { ...prev.days } };
 
       if (!next.days[dateKey]) {
-        next.days[dateKey] = { completed: {}, earnedXP: 0, xpDebt: 0, note: "" };
+        next.days[dateKey] = { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false };
       }
 
       if (next.lastActiveDate !== dateKey) {
@@ -1845,17 +2066,13 @@ export default function LevelUpQuestBoard() {
         for (let i = 1; i < diffDays; i++) {
           const missedKey = fmtDateKey(addDays(last, i));
           if (!next.days[missedKey]) {
-            next.days[missedKey] = { completed: {}, earnedXP: 0, xpDebt: 0, note: "(missed)" };
+            next.days[missedKey] = { completed: {}, earnedXP: 0, xpDebt: 0, note: "(missed)", debtApplied: false };
           }
 
           const missed = next.days[missedKey];
           const anyDone = missed.earnedXP > 0 || Object.values(missed.completed || {}).some((x) => x?.done);
-          if (!anyDone) {
-            if (next.settings.penaltyMode === "xp_debt") {
-              missed.xpDebt = (missed.xpDebt || 0) + 50;
-            } else if (next.settings.penaltyMode === "cooldown") {
-              next.cooldownUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-            }
+          if (!anyDone && next.settings.xpDebtEnabled) {
+            missed.xpDebt = (missed.xpDebt || 0) + 50;
           }
         }
 
@@ -1894,7 +2111,29 @@ export default function LevelUpQuestBoard() {
     return count;
   }, [state.days, dateKey]);
 
-  const todays = state.days[dateKey] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "" };
+  const todays = state.days[dateKey] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false };
+  const isWithinWindowNow = useMemo(
+    () => isWithinDayWindow(settings, new Date(nowTick)),
+    [settings.wakeTime, settings.bedTime, nowTick]
+  );
+
+  useEffect(() => {
+    if (!settings.xpDebtEnabled) return;
+    if (isWithinDayWindow(settings, new Date(nowTick))) return;
+
+    setState((prev) => {
+      const key = dateKey;
+      const existing = prev.days[key] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false };
+      if (existing.debtApplied) return prev;
+      const allDone = prev.quests.every((q) => existing.completed?.[q.id]?.done);
+      const nextDay = {
+        ...existing,
+        debtApplied: true,
+        xpDebt: allDone ? existing.xpDebt || 0 : Math.max(existing.xpDebt || 0, 50),
+      };
+      return { ...prev, days: { ...prev.days, [key]: nextDay } };
+    });
+  }, [settings.xpDebtEnabled, settings.wakeTime, settings.bedTime, nowTick, dateKey, state.quests]);
 
   const isCooldownActive = useMemo(() => {
     if (!state.cooldownUntil) return false;
@@ -1943,10 +2182,14 @@ export default function LevelUpQuestBoard() {
     setTab("today");
   }
 
+  function requestReset() {
+    setResetModalOpen(true);
+  }
+
   function toggleQuestDone(questId) {
     setState((prev) => {
       const key = dateKey;
-      const day = prev.days[key] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "" };
+      const day = prev.days[key] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false };
       const was = !!day.completed?.[questId]?.done;
 
       const q = prev.quests.find((x) => x.id === questId);
@@ -1968,7 +2211,7 @@ export default function LevelUpQuestBoard() {
       const earnedDelta = was ? -prevAward : award;
       let newDebt = day.xpDebt || 0;
       let credited = earnedDelta;
-      if (earnedDelta > 0 && prev.settings.penaltyMode === "xp_debt" && newDebt > 0) {
+      if (earnedDelta > 0 && prev.settings.xpDebtEnabled && newDebt > 0) {
         const pay = Math.min(newDebt, earnedDelta);
         newDebt -= pay;
         credited -= pay;
@@ -2003,7 +2246,7 @@ export default function LevelUpQuestBoard() {
     if (!boss) return;
 
     setState((prev) => {
-      const entry = prev.days[bossKey] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "" };
+      const entry = prev.days[bossKey] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false };
       const was = !!entry.completed?.[boss.id]?.done;
       const prevAward = entry.completed?.[boss.id]?.xp || 0;
 
@@ -2016,7 +2259,7 @@ export default function LevelUpQuestBoard() {
 
       let newDebt = entry.xpDebt || 0;
       let credited = delta;
-      if (delta > 0 && prev.settings.penaltyMode === "xp_debt" && newDebt > 0) {
+      if (delta > 0 && prev.settings.xpDebtEnabled && newDebt > 0) {
         const pay = Math.min(newDebt, delta);
         newDebt -= pay;
         credited -= pay;
@@ -2037,8 +2280,20 @@ export default function LevelUpQuestBoard() {
     });
   }
 
-  function setPenaltyMode(mode) {
-    setState((prev) => ({ ...prev, settings: { ...prev.settings, penaltyMode: mode } }));
+  function attemptToggleQuestDone(questId) {
+    if (settings.blockAfterBedtime && !isWithinDayWindow(settings, new Date())) {
+      setToastMessage("Outside your day window — completion won’t count.");
+      return;
+    }
+    toggleQuestDone(questId);
+  }
+
+  function attemptToggleBossDone() {
+    if (settings.blockAfterBedtime && !isWithinDayWindow(settings, new Date())) {
+      setToastMessage("Outside your day window — completion won’t count.");
+      return;
+    }
+    toggleBossDone();
   }
 
   function setWeeklyBossEnabled(v) {
@@ -2190,9 +2445,9 @@ export default function LevelUpQuestBoard() {
           settings={settings}
           boss={boss}
           bossDone={bossDone}
-          toggleQuestDone={toggleQuestDone}
-          toggleBossDone={toggleBossDone}
-          setPenaltyMode={setPenaltyMode}
+          toggleQuestDone={attemptToggleQuestDone}
+          toggleBossDone={attemptToggleBossDone}
+          isWithinWindowNow={isWithinWindowNow}
           isDark={isDark}
           border={border}
           surface={surface}
@@ -2255,16 +2510,50 @@ export default function LevelUpQuestBoard() {
           border={border}
           surface={surface}
           textMuted={textMuted}
-          resetAll={resetAll}
+          requestReset={requestReset}
           setWeeklyBossEnabled={setWeeklyBossEnabled}
-          setPenaltyMode={setPenaltyMode}
           setState={setState}
         />
       ) : null}
 
+      <Modal
+        open={resetModalOpen}
+        title="Reset Progress?"
+        onClose={() => setResetModalOpen(false)}
+        isDark={isDark}
+        border={border}
+        surface={surface}
+        textMuted={textMuted}
+        showClose={false}
+        showHint={false}
+      >
+        <div className="space-y-4">
+          <div className={cx("text-sm", textMuted)}>
+            This will delete all quests, XP, ranks, settings, and history. You will have to start over.
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setResetModalOpen(false)} isDark={isDark}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setResetModalOpen(false);
+                resetAll();
+              }}
+              isDark={isDark}
+            >
+              Delete Everything
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <div className={cx("mt-8 text-center text-xs", isDark ? "text-zinc-500" : "text-zinc-500")}>
         Offline-first MVP • LocalStorage • Solo Leveling vibe
       </div>
+
+      <Toast message={toastMessage} isDark={isDark} />
 
       <BottomTabs tab={tab} setTab={setTab} isDark={isDark} />
     </Shell>

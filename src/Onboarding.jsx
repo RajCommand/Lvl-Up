@@ -15,6 +15,32 @@ function unitLabel(unitType) {
   return "reps";
 }
 
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function parseTimeToMinutes(str) {
+  if (!str || typeof str !== "string") return 0;
+  const [hRaw, mRaw] = str.split(":");
+  const h = clamp(Number(hRaw || 0), 0, 23);
+  const m = clamp(Number(mRaw || 0), 0, 59);
+  return h * 60 + m;
+}
+
+function dayWindowMinutes(wakeTime, bedTime) {
+  const wakeMin = parseTimeToMinutes(wakeTime);
+  const bedRaw = parseTimeToMinutes(bedTime);
+  const bedMin = bedRaw <= wakeMin ? bedRaw + 1440 : bedRaw;
+  return Math.max(1, bedMin - wakeMin);
+}
+
+function formatWindow(minutes) {
+  const total = Math.max(0, Math.round(minutes));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${h}h ${m}m`;
+}
+
 const PRESET_LABELS = [
   { id: "beginner", label: "Beginner" },
   { id: "standard", label: "Standard" },
@@ -81,12 +107,19 @@ export default function Onboarding({ onComplete }) {
   const [difficultyByTask, setDifficultyByTask] = useState({});
   const [globalDifficulty, setGlobalDifficulty] = useState("");
   const [transitionKey, setTransitionKey] = useState(0);
-  const [typedLabel] = useState("Leveler Name");
+  const [typedLabel] = useState("Leveler Name:");
   const [focusedTaskId, setFocusedTaskId] = useState("");
+  const [wakeTime, setWakeTime] = useState("08:00");
+  const [bedTime, setBedTime] = useState("00:00");
+  const [xpDebtEnabled, setXpDebtEnabled] = useState(false);
+  const [blockAfterBedtime, setBlockAfterBedtime] = useState(true);
+  const [noPhonePenaltyEnabled, setNoPhonePenaltyEnabled] = useState(false);
+  const [noPhonePenaltyMinutes, setNoPhonePenaltyMinutes] = useState(60);
+  const [agreementChecked, setAgreementChecked] = useState(false);
   const nameInputRef = useRef(null);
   const dobInputRef = useRef(null);
 
-  const stepsTotal = 6;
+  const stepsTotal = 7;
   const isDark = typeof window !== "undefined" && window.matchMedia
     ? window.matchMedia("(prefers-color-scheme: dark)").matches
     : false;
@@ -132,8 +165,9 @@ export default function Onboarding({ onComplete }) {
     if (step === 3) return dob.trim().length > 0;
     if (step === 4) return selectedCategories.size > 0;
     if (step === 5) return selectedTaskList.length > 0;
+    if (step === 7) return agreementChecked;
     return true;
-  }, [step, playerName, dob, selectedCategories, selectedTaskList]);
+  }, [step, playerName, dob, selectedCategories, selectedTaskList, agreementChecked]);
 
   useEffect(() => {
     setTransitionKey((v) => v + 1);
@@ -143,6 +177,16 @@ export default function Onboarding({ onComplete }) {
     if (step === 2) nameInputRef.current?.focus();
     if (step === 3) dobInputRef.current?.focus();
   }, [step]);
+
+  function openDobPicker() {
+    const el = dobInputRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === "function") el.showPicker();
+    else {
+      el.focus();
+      el.click();
+    }
+  }
 
   function toggleCategory(id) {
     setSelectedCategories((prev) => {
@@ -222,6 +266,14 @@ export default function Onboarding({ onComplete }) {
       profile: { name: playerName.trim(), dob },
       categories: Array.from(selectedCategories),
       quests,
+      settings: {
+        wakeTime,
+        bedTime,
+        xpDebtEnabled,
+        blockAfterBedtime,
+        noPhonePenaltyEnabled,
+        noPhonePenaltyMinutes,
+      },
     });
   }
 
@@ -232,7 +284,12 @@ export default function Onboarding({ onComplete }) {
   const contentAlignment = step <= 4 ? "items-center justify-center" : "items-start justify-center";
 
   return (
-    <div className={cx("min-h-screen", isDark ? "bg-zinc-950 text-zinc-50" : "bg-zinc-50 text-zinc-900")}>
+    <div
+      className={cx(
+        "min-h-screen w-full overflow-x-hidden",
+        isDark ? "bg-zinc-950 text-zinc-50" : "bg-zinc-50 text-zinc-900"
+      )}
+    >
       <style>{`
         @keyframes stepIn {
           0% { opacity: 0; transform: translateY(12px); }
@@ -283,13 +340,14 @@ export default function Onboarding({ onComplete }) {
                       "mx-auto w-full max-w-md px-2"
                     )}
                   >
-                  <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                  <div
+                    className={cx(
+                      "text-[clamp(2.5rem,9vw,4.5rem)] sm:text-7xl font-black tracking-tight animate-logo whitespace-nowrap",
+                      isDark ? "text-zinc-50" : "text-zinc-900"
+                    )}
+                  >
                     <span>
                       {typedLabel}
-                      <span className="ml-3 inline-flex flex-col items-center gap-2 align-middle">
-                        <span className={cx("h-2.5 w-2.5 rounded-full", isDark ? "bg-zinc-50" : "bg-zinc-900")} />
-                        <span className={cx("h-2.5 w-2.5 rounded-full", isDark ? "bg-zinc-50" : "bg-zinc-900")} />
-                      </span>
                     </span>
                   </div>
                     <div className="mt-3">
@@ -313,16 +371,26 @@ export default function Onboarding({ onComplete }) {
                   <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
                     Date of Birth
                   </div>
-                  <input
-                    ref={dobInputRef}
-                    type="date"
-                    value={dob}
-                    onChange={(e) => setDob(e.target.value)}
-                    className={cx(
-                      "mx-auto w-full max-w-md rounded-2xl border px-4 py-3 text-sm",
-                      isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white"
-                    )}
-                  />
+                  <div className="mx-auto w-full max-w-md px-2 min-w-0">
+                    <div
+                      onClick={openDobPicker}
+                      className={cx(
+                        "w-full cursor-pointer rounded-2xl border px-4 py-3",
+                        isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white"
+                      )}
+                    >
+                      <input
+                        ref={dobInputRef}
+                        type="date"
+                        value={dob}
+                        onChange={(e) => setDob(e.target.value)}
+                        className={cx(
+                          "w-full bg-transparent text-sm outline-none",
+                          isDark ? "text-zinc-50" : "text-zinc-900"
+                        )}
+                      />
+                    </div>
+                  </div>
                 </div>
               ) : null}
 
@@ -335,7 +403,7 @@ export default function Onboarding({ onComplete }) {
                     <div>Choose what you want to level up.</div>
                     <div>You can change this anytime.</div>
                   </div>
-                  <div className="mt-6 grid grid-cols-2 gap-4 text-left">
+                  <div className="mt-6 grid w-full grid-cols-2 gap-4 text-left">
                     {CATEGORY_OPTIONS.map((cat) => {
                       const active = selectedCategories.has(cat.id);
                       const info = categoryCards[cat.id];
@@ -351,7 +419,7 @@ export default function Onboarding({ onComplete }) {
                           key={cat.id}
                           onClick={() => toggleCategory(cat.id)}
                           className={cx(
-                            "relative overflow-hidden rounded-2xl border p-3 transition",
+                            "relative flex h-full max-w-full flex-col overflow-hidden rounded-2xl border p-3 transition",
                             active
                               ? isDark
                                 ? "border-zinc-100 bg-zinc-900 text-zinc-50"
@@ -365,19 +433,26 @@ export default function Onboarding({ onComplete }) {
                           <img
                             src={info.image}
                             alt={info.title}
-                            className={cx(
-                              "aspect-square w-full rounded-xl object-cover transition",
-                              active ? "grayscale-0" : "grayscale"
-                            )}
+                            className={cx("aspect-square w-full rounded-xl object-cover transition", active ? "grayscale-0" : "grayscale")}
                           />
-                          <div
-                            className="mt-3 text-sm font-extrabold"
-                            style={{ color: active ? domainColor : isDark ? "rgba(255,255,255,0.85)" : "rgba(17,24,39,0.85)" }}
-                          >
-                            {info.title}
-                          </div>
-                          <div className={cx("mt-1 text-xs", active ? "text-zinc-200" : isDark ? "text-zinc-400" : "text-zinc-600")}>
-                            {info.subtitle}
+                          <div className="mt-3 min-h-[44px]">
+                            <div
+                              className="text-sm font-extrabold"
+                              style={{ color: active ? domainColor : isDark ? "rgba(255,255,255,0.85)" : "rgba(17,24,39,0.85)" }}
+                            >
+                              {info.title}
+                            </div>
+                            <div
+                              className={cx("mt-1 text-xs", active ? "text-zinc-200" : isDark ? "text-zinc-400" : "text-zinc-600")}
+                              style={{
+                                display: "-webkit-box",
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                              }}
+                            >
+                              {info.subtitle}
+                            </div>
                           </div>
                         </button>
                       );
@@ -393,7 +468,7 @@ export default function Onboarding({ onComplete }) {
                 <div className="space-y-6">
                   <div className="text-center space-y-3">
                     <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
-                      Choose Your Quests
+                      Choose Your Quests.
                     </div>
                     <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-400" : "text-zinc-500")}>
                       Select preexisting domain specific quests. You can add your own quests later.
@@ -468,7 +543,7 @@ export default function Onboarding({ onComplete }) {
                 <div className="space-y-4">
                   <div className="text-center space-y-3">
                     <div className={cx("text-6xl sm:text-7xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
-                      Set Your Goals
+                      Set Your Goals.
                     </div>
                     <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-400" : "text-zinc-500")}>
                       Set your current level and your S-rank goal. You can always adjust this later.
@@ -612,6 +687,156 @@ export default function Onboarding({ onComplete }) {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              ) : null}
+
+              {step === 7 ? (
+                <div className="space-y-4">
+                  <div className="text-center space-y-3">
+                    <div className={cx("text-5xl sm:text-6xl font-black tracking-tight animate-logo", isDark ? "text-zinc-50" : "text-zinc-900")}>
+                      Rules of the Game
+                    </div>
+                    <div className={cx("mx-auto max-w-md text-sm leading-relaxed", isDark ? "text-zinc-400" : "text-zinc-500")}>
+                      Your progress only counts inside your day window. You can change this anytime.
+                    </div>
+                  </div>
+
+                  <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
+                    <div className="text-sm font-extrabold">Daily Time Window</div>
+                    <div className={cx("mt-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                      Choose your wake and bed times.
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <div className={cx("text-xs font-semibold", isDark ? "text-zinc-400" : "text-zinc-600")}>Wake time</div>
+                        <input
+                          type="time"
+                          value={wakeTime}
+                          onChange={(e) => setWakeTime(e.target.value)}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        />
+                      </div>
+                      <div>
+                        <div className={cx("text-xs font-semibold", isDark ? "text-zinc-400" : "text-zinc-600")}>Bed time</div>
+                        <input
+                          type="time"
+                          value={bedTime}
+                          onChange={(e) => setBedTime(e.target.value)}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        />
+                      </div>
+                    </div>
+                    <div className={cx("mt-3 text-xs", isDark ? "text-zinc-300" : "text-zinc-600")}>
+                      You have {formatWindow(dayWindowMinutes(wakeTime, bedTime))} each day to complete quests.
+                    </div>
+                    <div className={cx("mt-2 rounded-xl border p-3 text-xs", isDark ? "border-zinc-800 bg-zinc-950/10 text-zinc-400" : "border-zinc-200 bg-zinc-50 text-zinc-600")}>
+                      Quests completed outside this window won’t count.
+                    </div>
+                  </div>
+
+                  <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
+                    <div className="text-sm font-extrabold">XP Debt + Punishments</div>
+                    <div className={cx("mt-1 text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                      Optional guardrails for discipline.
+                    </div>
+                    <div className="mt-3 flex items-center justify-between">
+                      <div className="text-xs font-semibold">Enable XP Debt</div>
+                      <label className="inline-flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={xpDebtEnabled}
+                          onChange={(e) => {
+                            const next = e.target.checked;
+                            setXpDebtEnabled(next);
+                            if (next) setBlockAfterBedtime(true);
+                          }}
+                          className="h-4 w-4"
+                        />
+                        <span className="text-sm font-semibold">{xpDebtEnabled ? "On" : "Off"}</span>
+                      </label>
+                    </div>
+
+                    {xpDebtEnabled ? (
+                      <div className="mt-3 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-xs font-semibold">Block quest completion after bedtime</div>
+                            <div className={cx("mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                              After bedtime, quests cannot be marked complete until next day.
+                            </div>
+                          </div>
+                          <label className="inline-flex cursor-pointer items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={blockAfterBedtime}
+                              onChange={(e) => setBlockAfterBedtime(e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span className="text-sm font-semibold">{blockAfterBedtime ? "On" : "Off"}</span>
+                          </label>
+                        </div>
+
+                        <div className={cx("rounded-xl border p-3", isDark ? "border-zinc-800" : "border-zinc-200")}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-xs font-semibold">No-phone penalty</div>
+                              <div className={cx("mt-1 text-[11px]", isDark ? "text-zinc-400" : "text-zinc-600")}>
+                                If you miss quests, you owe a no-phone session the next day.
+                              </div>
+                            </div>
+                            <label className="inline-flex cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={noPhonePenaltyEnabled}
+                                onChange={(e) => setNoPhonePenaltyEnabled(e.target.checked)}
+                                className="h-4 w-4"
+                              />
+                              <span className="text-sm font-semibold">{noPhonePenaltyEnabled ? "On" : "Off"}</span>
+                            </label>
+                          </div>
+                          {noPhonePenaltyEnabled ? (
+                            <div className="mt-3">
+                              <div className={cx("text-xs font-semibold", isDark ? "text-zinc-400" : "text-zinc-600")}>Duration</div>
+                              <select
+                                value={noPhonePenaltyMinutes}
+                                onChange={(e) => setNoPhonePenaltyMinutes(Number(e.target.value))}
+                                className={cx(
+                                  "mt-1 w-full rounded-xl border p-2 text-sm",
+                                  isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                )}
+                              >
+                                <option value={30}>30m</option>
+                                <option value={60}>1h</option>
+                                <option value={120}>2h</option>
+                                <option value={180}>3h</option>
+                                <option value={240}>4h</option>
+                              </select>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className={cx("rounded-2xl border p-4 text-left", isDark ? "border-zinc-800 bg-zinc-950/20" : "border-zinc-200 bg-white")}>
+                    <label className="flex items-start gap-3 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={agreementChecked}
+                        onChange={(e) => setAgreementChecked(e.target.checked)}
+                        className="mt-1 h-4 w-4"
+                      />
+                      <span className={cx("text-sm font-semibold", isDark ? "text-zinc-100" : "text-zinc-900")}>
+                        I understand: to level up, I complete quests inside my daily window.
+                      </span>
+                    </label>
                   </div>
                 </div>
               ) : null}

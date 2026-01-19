@@ -12,18 +12,22 @@ function safeParseJSON(value, fallback) {
   }
 }
 
-function buildStorageState(quests) {
+function buildStorageState(quests, settingsOverrides = {}) {
   return {
     quests,
     settings: {
       themeMode: "system",
       hardcore: false,
-      penaltyMode: "xp_debt",
+      xpDebtEnabled: false,
+      blockAfterBedtime: true,
+      noPhonePenaltyEnabled: false,
+      noPhonePenaltyMinutes: 60,
       streakBonusPctPerDay: 1,
       maxStreakBonusPct: 20,
       weeklyBossEnabled: true,
       wakeTime: "07:00",
       bedTime: "23:00",
+      ...settingsOverrides,
     },
   };
 }
@@ -54,13 +58,13 @@ export default function Boot() {
     }
   }, []);
 
-  function handleComplete({ profile, categories, quests }) {
+  function handleComplete({ profile, categories, quests, settings }) {
     if (typeof window === "undefined") return;
     window.localStorage.setItem("playerProfile", JSON.stringify(profile));
     window.localStorage.setItem("selectedCategories", JSON.stringify(categories));
     window.localStorage.setItem("quests", JSON.stringify(quests));
     window.localStorage.setItem("onboardingComplete", "true");
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(buildStorageState(quests)));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(buildStorageState(quests, settings)));
     setReady(true);
   }
 
