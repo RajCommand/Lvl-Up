@@ -1,12 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Brain, ChevronDown, ChevronUp, Eye, ChevronLeft, ChevronRight } from "lucide-react";
+import { Brain, ChevronDown, ChevronUp, Eye, ChevronLeft, ChevronRight, Sparkles, Flame, Lock, Medal, ShieldAlert, Trophy } from "lucide-react";
 import { DayTimerClock } from "./components/DayTimerClock";
 import QuoteOfTheDay from "./components/QuoteOfTheDay";
+import DoDifferent from "./DoDifferent";
+import {
+  ACTIVITY_TYPES_BY_DOMAIN,
+  DOMAIN_OPTIONS,
+  MEASUREMENT_TYPES,
+  SCHEMA_VERSION,
+  allowedMeasurementTypes,
+  defaultUnitForMeasurement,
+  inferQuestTaxonomy,
+  measurementRequiresTarget,
+  normalizeActivityKind,
+  normalizeDomain,
+  normalizeMeasurementType,
+  unitTypeForMeasurement,
+} from "./taxonomy";
 
 /**
  * Level Up: Quest Board — Solo Leveling–inspired MVP (single-file)
  * - Offline-first (LocalStorage)
- * - Tabs: Today / Calendar / Quests / Stats / Settings
+ * - Tabs: Today / Calendar / Quests / Progress / Settings
  * - Calendar days are clickable and open a modal (popup)
  * - FIX: input focus glitch (components that render inputs are top-level, not redefined per keystroke)
  */
@@ -108,8 +123,49 @@ function isWithinDayWindow(settings, now = new Date()) {
   return nowMin >= wakeMin && nowMin <= bedMin;
 }
 
+function getWeekStart(date, wakeTime, weekStartsOnMonday = true) {
+  const base = new Date(date);
+  const wakeMinutes = parseTimeToMinutes(wakeTime || "08:00");
+  base.setHours(Math.floor(wakeMinutes / 60), wakeMinutes % 60, 0, 0);
+  const day = base.getDay();
+  const offset = weekStartsOnMonday ? (day + 6) % 7 : day;
+  const start = new Date(base);
+  start.setDate(base.getDate() - offset);
+  if (date < start) start.setDate(start.getDate() - 7);
+  return start;
+}
+
+function getWeekDays(weekStart) {
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    days.push(fmtDateKey(d));
+  }
+  return days;
+}
+
+function buildWeeklyChartData(xpByDay, weekStart) {
+  const keys = getWeekDays(weekStart);
+  let cumulative = 0;
+  return keys.map((key) => {
+    const dailyXP = Number(xpByDay?.[key] || 0);
+    cumulative += dailyXP;
+    const label = new Date(`${key}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+    return { dayLabel: label, dateKey: key, dailyXP, cumulativeXP: cumulative };
+  });
+}
+
+function incrementXpByDay(map, key, delta) {
+  const next = { ...(map || {}) };
+  const prevVal = Number(next[key] || 0);
+  const updated = prevVal + delta;
+  next[key] = Math.max(0, updated);
+  return next;
+}
+
 function questIsTimed(q) {
-  return typeof q.targetMinutes === "number" && q.targetMinutes > 0;
+  return q?.measurementType === "time" && typeof q.targetMinutes === "number" && q.targetMinutes > 0;
 }
 
 function questTimerLimitMs(q) {
@@ -155,6 +211,10 @@ const DEFAULT_QUESTS = [
     id: "q_pushups",
     name: "Push-ups",
     category: "body",
+    domain: "body",
+    activityKind: "strength",
+    measurementType: "reps",
+    unit: "reps",
     unitType: "reps",
     currentTargetValue: 10,
     sTargetValue: 100,
@@ -166,6 +226,10 @@ const DEFAULT_QUESTS = [
     id: "q_situps",
     name: "Sit-ups",
     category: "body",
+    domain: "body",
+    activityKind: "strength",
+    measurementType: "reps",
+    unit: "reps",
     unitType: "reps",
     currentTargetValue: 10,
     sTargetValue: 80,
@@ -177,6 +241,10 @@ const DEFAULT_QUESTS = [
     id: "q_pullups",
     name: "Pull-ups",
     category: "body",
+    domain: "body",
+    activityKind: "strength",
+    measurementType: "reps",
+    unit: "reps",
     unitType: "reps",
     currentTargetValue: 5,
     sTargetValue: 20,
@@ -188,6 +256,10 @@ const DEFAULT_QUESTS = [
     id: "q_run",
     name: "Run",
     category: "body",
+    domain: "body",
+    activityKind: "cardio",
+    measurementType: "distance",
+    unit: "km",
     unitType: "distance",
     currentTargetValue: 1.0,
     sTargetValue: 5.0,
@@ -246,11 +318,10 @@ const PRIORITY_MULTIPLIER = {
 
 const IMPROVEMENT_BONUS_MULT = 1.5;
 
-const QUEST_CATEGORIES = ["body", "mind", "hobbies", "productivity"];
+const QUEST_CATEGORIES = ["body", "mind", "hobbies", "life"];
 
 function normalizeQuestCategory(category) {
-  if (category === "craft") return "hobbies";
-  return QUEST_CATEGORIES.includes(category) ? category : "body";
+  return normalizeDomain(category);
 }
 
 function normalizeUnitType(unitType) {
@@ -259,39 +330,35 @@ function normalizeUnitType(unitType) {
   return "reps";
 }
 
-function allowedKindsForCategory(category) {
-  if (category === "body") return ["reps", "distance", "minutes"];
-  return ["minutes"];
+function allowedKindsForCategory(category, activityKind) {
+  return allowedMeasurementTypes(category, activityKind);
 }
 
 function categoryLabel(category) {
-  if (category === "mind") return "Mind";
-  if (category === "hobbies") return "Hobbies";
-  if (category === "productivity") return "Productivity";
-  return "Body";
+  const normalized = normalizeDomain(category);
+  return DOMAIN_OPTIONS.find((opt) => opt.id === normalized)?.label || "Life";
 }
 
-function unitLabel(kind) {
-  if (kind === "distance") return "km";
-  if (kind === "minutes") return "min";
+function measurementLabel(kind) {
+  const entry = MEASUREMENT_TYPES.find((m) => m.id === kind);
+  return entry ? entry.label : "Reps";
+}
+
+function questUnitLabel(q) {
+  if (!q || q.measurementType === "habit") return "";
+  if (q.unit) return q.unit;
+  if (q.measurementType === "time") return "min";
+  if (q.measurementType === "distance") return "km";
+  if (q.measurementType === "count") return "x";
   return "reps";
 }
 
 const DOMAIN_COLORS = {
-  body: "#3B82F6",
-  mind: "#EF4444",
+  body: "#EF4444",
+  mind: "#3B82F6",
   hobbies: "#22C55E",
-  productivity: "#EAB308",
+  life: "#EAB308",
 };
-
-function normalizeDomain(domain) {
-  const n = String(domain || "").toLowerCase().trim();
-  if (n === "hobby" || n === "craft") return "hobbies";
-  if (n === "work" || n === "productivity") return "productivity";
-  if (n === "mind") return "mind";
-  if (n === "body") return "body";
-  return n;
-}
 
 function hexToRgb(hex) {
   const raw = String(hex || "").replace("#", "");
@@ -322,7 +389,7 @@ function categoryIconForName(name) {
   if (/(strength|workout|fitness|body)/.test(n)) return IconDumbbell;
   if (/(mindfulness|mind|focus|meditation)/.test(n)) return Brain;
   if (/(hobby|hobbies|learning|study|reading|craft)/.test(n)) return IconBook;
-  if (/(productivity|productive|work)/.test(n)) return IconTrendingUp;
+  if (/(productivity|productive|work|life|admin|finance|chores|hydration|nutrition)/.test(n)) return IconTrendingUp;
   return IconTag;
 }
 
@@ -367,18 +434,24 @@ function defaultSTargetValue({ name, unitType, category }) {
 }
 
 function normalizeQuest(q) {
-  const category = normalizeQuestCategory(q.category);
-  const unitType = normalizeUnitType(q.unitType || q.kind);
-  const allowed = allowedKindsForCategory(category);
-  const safeUnitType = allowed.includes(unitType) ? unitType : allowed[0];
-  const currentTargetRaw = Number(
-    q.currentTargetValue ?? q.baseTarget ?? q.target ?? (safeUnitType === "distance" ? 1 : 1)
-  );
-  const currentTargetValue = Number.isFinite(currentTargetRaw) ? currentTargetRaw : 1;
-  const sTargetRaw = Number(
-    q.sTargetValue ?? defaultSTargetValue({ name: q.name, unitType: safeUnitType, category })
-  );
-  const sTargetValue = Number.isFinite(sTargetRaw) && sTargetRaw > 0 ? sTargetRaw : defaultSTargetValue({ name: q.name, unitType: safeUnitType, category });
+  const inferred = inferQuestTaxonomy(q);
+  const domain = normalizeDomain(q.domain || q.category || inferred.domain);
+  const activityKind = normalizeActivityKind(domain, q.activityKind || inferred.activityKind);
+  let measurementType = normalizeMeasurementType(q.measurementType || inferred.measurementType, q.unitType || q.kind);
+  const allowedMeasurements = allowedKindsForCategory(domain, activityKind);
+  if (!allowedMeasurements.includes(measurementType)) measurementType = allowedMeasurements[0];
+  const unit = String(q.unit || inferred.unit || defaultUnitForMeasurement(measurementType)).trim();
+  const unitType = unitTypeForMeasurement(measurementType);
+  const currentTargetRaw = Number(q.currentTargetValue ?? q.baseTarget ?? q.target ?? 1);
+  let currentTargetValue = Number.isFinite(currentTargetRaw) ? currentTargetRaw : 1;
+  if (measurementRequiresTarget(measurementType)) currentTargetValue = Math.max(1, currentTargetValue);
+  else currentTargetValue = 1;
+  const sTargetRaw = Number(q.sTargetValue ?? defaultSTargetValue({ name: q.name, unitType, category: domain }));
+  let sTargetValue =
+    Number.isFinite(sTargetRaw) && sTargetRaw > 0
+      ? sTargetRaw
+      : defaultSTargetValue({ name: q.name, unitType, category: domain });
+  if (!measurementRequiresTarget(measurementType)) sTargetValue = 1;
   const baselineRaw = Number(q.lastTargetValue ?? q.baselineValue ?? currentTargetValue);
   const baselineValue = Number.isFinite(baselineRaw) ? baselineRaw : currentTargetValue;
   const createdAtRaw = Number(q.createdAt ?? 0);
@@ -386,11 +459,12 @@ function normalizeQuest(q) {
   const rawPriority = String(q.priority || (q.tier === "Side" ? "minor" : "main")).toLowerCase();
   const priority = rawPriority === "minor" ? "minor" : "main";
   const xpRaw = Number(q.xp ?? 0);
-  const targetMinutesRaw = Number(q.targetMinutes ?? (safeUnitType === "minutes" ? currentTargetValue : NaN));
-  const targetMinutes = Number.isFinite(targetMinutesRaw) ? Math.max(1, targetMinutesRaw) : null;
+  const targetMinutesRaw = Number(q.targetMinutes ?? (measurementType === "time" ? currentTargetValue : NaN));
+  const targetMinutes = measurementType === "time" && Number.isFinite(targetMinutesRaw) ? Math.max(1, targetMinutesRaw) : null;
   const graceMinutesRaw = Number(q.graceMinutes ?? (targetMinutes ? 10 : 0));
   const graceMinutes = Number.isFinite(graceMinutesRaw) ? Math.max(0, graceMinutesRaw) : 0;
-  const status = q.status === "active" || q.status === "completed" ? q.status : "idle";
+  const status =
+    q.status === "active" || q.status === "completed" || q.status === "paused" ? q.status : "idle";
   const startedAt = typeof q.startedAt === "number" ? q.startedAt : null;
   const elapsedMs = typeof q.elapsedMs === "number" ? q.elapsedMs : 0;
   const pct = progressPct(currentTargetValue, sTargetValue);
@@ -400,8 +474,12 @@ function normalizeQuest(q) {
   const safeStatus = status === "active" && !startedAt ? "idle" : status;
   return {
     ...q,
-    category,
-    unitType: safeUnitType,
+    category: domain,
+    domain,
+    activityKind,
+    measurementType,
+    unit,
+    unitType,
     currentTargetValue,
     sTargetValue,
     baselineValue,
@@ -414,6 +492,57 @@ function normalizeQuest(q) {
     targetMinutes,
     graceMinutes,
   };
+}
+
+function migrateSavedState(saved) {
+  if (!saved || typeof saved !== "object") return null;
+  const schemaVersion = Number(saved.schemaVersion || 1);
+  if (schemaVersion >= SCHEMA_VERSION) return saved;
+
+  const migrated = { ...saved };
+  migrated.schemaVersion = SCHEMA_VERSION;
+  migrated.quests = (saved.quests || []).map((q) => {
+    const inferred = inferQuestTaxonomy(q);
+    const domain = normalizeDomain(q.domain || q.category || inferred.domain);
+    const activityKind = normalizeActivityKind(domain, q.activityKind || inferred.activityKind);
+    let measurementType = normalizeMeasurementType(q.measurementType || inferred.measurementType, q.unitType || q.kind);
+    const allowed = allowedKindsForCategory(domain, activityKind);
+    if (!allowed.includes(measurementType)) measurementType = allowed[0];
+    const unit = String(q.unit || inferred.unit || defaultUnitForMeasurement(measurementType)).trim();
+    const unitType = unitTypeForMeasurement(measurementType);
+    const currentTargetValue = measurementRequiresTarget(measurementType)
+      ? Math.max(1, Number(q.currentTargetValue ?? q.baseTarget ?? q.target ?? 1) || 1)
+      : 1;
+    const sTargetValue = measurementRequiresTarget(measurementType)
+      ? Math.max(
+          1,
+          Number(q.sTargetValue ?? defaultSTargetValue({ name: q.name, unitType, category: domain })) || 1
+        )
+      : 1;
+    const targetMinutes = measurementType === "time" ? Math.max(1, Number(q.targetMinutes ?? currentTargetValue) || 1) : null;
+    const graceMinutes = measurementType === "time" ? Number(q.graceMinutes ?? 10) : 0;
+    return {
+      ...q,
+      category: domain,
+      domain,
+      activityKind,
+      measurementType,
+      unit,
+      unitType,
+      currentTargetValue,
+      sTargetValue,
+      targetMinutes,
+      graceMinutes,
+    };
+  });
+  if (!migrated.xpByDay) {
+    const xpByDay = {};
+    for (const [dayKey, entry] of Object.entries(saved.days || {})) {
+      xpByDay[dayKey] = Number(entry?.earnedXP || 0);
+    }
+    migrated.xpByDay = xpByDay;
+  }
+  return migrated;
 }
 
 function buildDefaultState({ settings = DEFAULT_SETTINGS, quests = DEFAULT_QUESTS } = {}) {
@@ -430,6 +559,10 @@ function buildDefaultState({ settings = DEFAULT_SETTINGS, quests = DEFAULT_QUEST
     totalXP,
     lastActiveDate: key,
     cooldownUntil: null,
+    weeklyChallenge: null,
+    mysteryBox: null,
+    schemaVersion: SCHEMA_VERSION,
+    xpByDay: { [key]: 0 },
   };
 }
 
@@ -871,7 +1004,8 @@ function BottomTabs({ tab, setTab, isDark }) {
   const items = [
     { id: "home", label: "Home", Icon: IconHome },
     { id: "quests", label: "Quests", Icon: IconList },
-    { id: "stats", label: "Stats", Icon: IconChart },
+    { id: "do-different", label: "Do Different", Icon: Sparkles },
+    { id: "stats", label: "Progress", Icon: IconChart },
   ];
 
   const frameCls = isDark
@@ -883,10 +1017,11 @@ function BottomTabs({ tab, setTab, isDark }) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 px-4 pb-[max(env(safe-area-inset-bottom),12px)]">
       <div className={cx("mx-auto max-w-2xl rounded-2xl border px-2 py-3 shadow-2xl backdrop-blur", frameCls)}>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {items.map((it) => {
             const active = tab === it.id;
             const Icon = it.Icon;
+            const accentIconCls = "";
             return (
               <button
                 key={it.id}
@@ -898,7 +1033,7 @@ function BottomTabs({ tab, setTab, isDark }) {
                 aria-current={active ? "page" : undefined}
               >
                 <div className="flex flex-col items-center gap-1.5">
-                  <Icon className={cx("h-6 w-6", active ? "opacity-100" : "opacity-80")} />
+                  <Icon className={cx("h-6 w-6", active ? "opacity-100" : "opacity-80", accentIconCls)} />
                   <span className="leading-none">{it.label}</span>
                 </div>
               </button>
@@ -1290,14 +1425,13 @@ function TodayQuestsSection({
   settings,
   boss,
   bossDone,
-  toggleQuestDone,
   toggleBossDone,
   isWithinWindowNow,
   timerTick,
-  onTimedStart,
-  onTimedPause,
-  onTimedResume,
-  onTimedComplete,
+  onQuestStart,
+  onQuestPause,
+  onQuestResume,
+  onQuestComplete,
   isDark,
   border,
   surface,
@@ -1307,7 +1441,7 @@ function TodayQuestsSection({
   const holdRef = useRef({});
   const [collapsingIds, setCollapsingIds] = useState([]);
   const [expandedCategories, setExpandedCategories] = useState(() => new Set());
-  const [timedOpenId, setTimedOpenId] = useState("");
+  const [openQuestId, setOpenQuestId] = useState("");
   const doneCount = state.quests.filter((q) => !!todays.completed?.[q.id]?.done).length;
   const total = state.quests.length;
   const percent = total ? Math.round((doneCount / total) * 100) : 0;
@@ -1317,7 +1451,7 @@ function TodayQuestsSection({
     { id: "body", label: "Body" },
     { id: "mind", label: "Mind" },
     { id: "hobbies", label: "Hobbies" },
-    { id: "productivity", label: "Productivity" },
+    { id: "life", label: "Life" },
   ];
 
   function orderedQuestsForCategory(catId) {
@@ -1339,7 +1473,7 @@ function TodayQuestsSection({
     const isActive = status === "active";
     const isPaused = status === "paused";
     const isCollapsing = collapsingIds.includes(q.id);
-    const elapsedMs = isActive && q.startedAt ? Math.max(0, timerTick - q.startedAt) : q.elapsedMs || 0;
+    const elapsedMs = isTimed ? (isActive && q.startedAt ? Math.max(0, timerTick - q.startedAt) : q.elapsedMs || 0) : 0;
     const limitMs = questTimerLimitMs(q);
     const remainingMs = limitMs ? Math.max(0, limitMs - elapsedMs) : 0;
 
@@ -1351,12 +1485,12 @@ function TodayQuestsSection({
     const cardCls = isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white";
 
     const handlePointerDown = () => {
-      if (!isActive) return;
+      if (!isActive || !isTimed) return;
       holdRef.current[q.id] = setTimeout(() => {
         if (navigator.vibrate) navigator.vibrate(30);
         setCollapsingIds((ids) => [...ids, q.id]);
         setTimeout(() => {
-          onTimedComplete(q.id);
+          onQuestComplete(q.id);
           setCollapsingIds((ids) => ids.filter((x) => x !== q.id));
         }, 260);
       }, 600);
@@ -1369,12 +1503,7 @@ function TodayQuestsSection({
     };
 
     const handleClick = () => {
-      if (done) return;
-      if (isTimed) {
-        setTimedOpenId((prev) => (prev === q.id ? "" : q.id));
-        return;
-      }
-      toggleQuestDone(q.id);
+      setOpenQuestId((prev) => (prev === q.id ? "" : q.id));
     };
 
     return (
@@ -1388,7 +1517,7 @@ function TodayQuestsSection({
           "relative w-full overflow-hidden rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]",
           cardCls,
           isActive ? "shadow-[0_0_0_2px_var(--accent-color)]" : "",
-          isCollapsing ? "max-h-0 overflow-hidden opacity-0" : isTimed && timedOpenId === q.id ? "max-h-[360px]" : "max-h-[160px]"
+          isCollapsing ? "max-h-0 overflow-hidden opacity-0" : openQuestId === q.id ? "max-h-[360px]" : "max-h-[160px]"
         )}
         style={{
           borderColor,
@@ -1415,12 +1544,12 @@ function TodayQuestsSection({
                 {q.name}
               </div>
               </div>
-              {isTimed && (isActive || isPaused) ? (
+              {!done && (isActive || isPaused) ? (
                 <div className="flex items-center gap-2">
                   <Button
                     onClick={(e) => {
                       e.stopPropagation();
-                      (isPaused ? onTimedResume : onTimedPause)(q.id);
+                      (isPaused ? onQuestResume : onQuestPause)(q.id);
                     }}
                     isDark={isDark}
                     className="px-3 py-1 text-xs"
@@ -1430,7 +1559,7 @@ function TodayQuestsSection({
                   <Button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onTimedComplete(q.id);
+                      onQuestComplete(q.id);
                     }}
                     isDark={isDark}
                     className="px-3 py-1 text-xs"
@@ -1442,26 +1571,56 @@ function TodayQuestsSection({
             </div>
             {isActive ? (
               <div className={cx("mt-1 text-xs font-semibold", textSoft)}>
-                {formatElapsed(elapsedMs)} elapsed • {formatElapsed(remainingMs)} left
+                {isTimed ? `${formatElapsed(elapsedMs)} elapsed • ${formatElapsed(remainingMs)} left` : "In progress"}
               </div>
             ) : isPaused ? (
               <div className={cx("mt-1 text-xs font-semibold", textSoft)}>
-                Paused • {formatElapsed(elapsedMs)} elapsed
+                {isTimed ? `Paused • ${formatElapsed(elapsedMs)} elapsed` : "Paused"}
               </div>
             ) : null}
-            {isTimed && timedOpenId === q.id ? (
+            {openQuestId === q.id ? (
               <div className={cx("mt-2 rounded-xl border p-3 text-xs", border, textMuted)}>
-                <div className="font-semibold">Target task goal: {q.targetMinutes} min</div>
-                <div className="mt-1">Grace period: {q.graceMinutes} min</div>
-                <div className="mt-1">If you have breaks, schedule them inside this window.</div>
-                <div className="mt-1">This task must be started.</div>
-                <div className="mt-1">Complete within the allotted time to count.</div>
+                {done ? (
+                  <div className="mb-2 font-semibold">
+                    Completed:{" "}
+                    {isTimed
+                      ? `${formatElapsed(q.elapsedMs || 0)} total`
+                      : q.measurementType === "habit"
+                      ? "Habit"
+                      : `${q.currentTargetValue} ${questUnitLabel(q)}`}
+                  </div>
+                ) : null}
+                <div className="font-semibold">
+                  Target task goal:{" "}
+                  {isTimed
+                    ? `${q.targetMinutes} min`
+                    : q.measurementType === "habit"
+                    ? "Maintain habit"
+                    : `${q.currentTargetValue} ${questUnitLabel(q)}`}
+                </div>
+                {isTimed ? (
+                  <>
+                    <div className="mt-1">Grace period: {q.graceMinutes} min</div>
+                    <div className="mt-1">If you have breaks, schedule them inside this window.</div>
+                    <div className="mt-1">This task must be started.</div>
+                    <div className="mt-1">Complete within the allotted time to count.</div>
+                  </>
+                ) : (
+                  <>
+                    {q.measurementType !== "habit" ? (
+                      <div className="mt-1">
+                        S-rank goal: {q.sTargetValue} {questUnitLabel(q)}
+                      </div>
+                    ) : null}
+                    <div className="mt-1">Start the quest, complete the task, then finish.</div>
+                  </>
+                )}
                 {status === "idle" ? (
                   <div className="mt-3">
                     <Button
                       onClick={(e) => {
                         e.stopPropagation();
-                        onTimedStart(q.id);
+                        onQuestStart(q.id);
                       }}
                       isDark={isDark}
                       className="w-full"
@@ -1723,14 +1882,13 @@ function QuestsPanel({
   settings,
   boss,
   bossDone,
-  toggleQuestDone,
   toggleBossDone,
   isWithinWindowNow,
   timerTick,
-  onTimedStart,
-  onTimedPause,
-  onTimedResume,
-  onTimedComplete,
+  onQuestStart,
+  onQuestPause,
+  onQuestResume,
+  onQuestComplete,
   textMuted,
   textSoft,
   isDark,
@@ -1778,14 +1936,13 @@ function QuestsPanel({
           settings={settings}
           boss={boss}
           bossDone={bossDone}
-          toggleQuestDone={toggleQuestDone}
           toggleBossDone={toggleBossDone}
           isWithinWindowNow={isWithinWindowNow}
           timerTick={timerTick}
-          onTimedStart={onTimedStart}
-          onTimedPause={onTimedPause}
-          onTimedResume={onTimedResume}
-          onTimedComplete={onTimedComplete}
+          onQuestStart={onQuestStart}
+          onQuestPause={onQuestPause}
+          onQuestResume={onQuestResume}
+          onQuestComplete={onQuestComplete}
           isDark={isDark}
           border={border}
           surface={surface}
@@ -1860,9 +2017,14 @@ function QuestsPanel({
 
           <div className="flex-1 space-y-3 overflow-y-auto pr-1">
             {editorList.map((q) => {
-              const allowedKinds = allowedKindsForCategory(q.category);
+              const domain = normalizeDomain(q.domain || q.category);
+              const activityOptions = ACTIVITY_TYPES_BY_DOMAIN[domain] || ACTIVITY_TYPES_BY_DOMAIN.life;
+              const allowedKinds = allowedKindsForCategory(domain, q.activityKind);
+              const measurementType = allowedKinds.includes(q.measurementType) ? q.measurementType : allowedKinds[0];
+              const unitValue = q.unit || defaultUnitForMeasurement(measurementType);
+              const needsTarget = measurementRequiresTarget(measurementType);
               const isExpanded = !!expandedById[q.id];
-              const domainStyle = getDomainStyle(q.category, isDark);
+              const domainStyle = getDomainStyle(domain, isDark);
               return (
                 <div
                   key={q.id}
@@ -1876,7 +2038,7 @@ function QuestsPanel({
                           className="text-xs font-semibold uppercase tracking-[0.12em]"
                           style={{ color: domainStyle.color }}
                         >
-                          {categoryLabel(q.category)}
+                          {categoryLabel(domain)}
                         </span>
                         <div
                           className="text-sm font-extrabold"
@@ -1886,16 +2048,19 @@ function QuestsPanel({
                         </div>
                       </div>
                       <div className={cx("mt-1 text-xs", textMuted)}>
-                        Current target: <span className={cx("font-bold", textSoft)}>{q.currentTargetValue} {unitLabel(q.unitType)}</span>
+                        Current target:{" "}
+                        <span className={cx("font-bold", textSoft)}>
+                          {q.measurementType === "habit" ? "Habit" : `${q.currentTargetValue} ${questUnitLabel(q)}`}
+                        </span>
                       </div>
                       {isExpanded ? (
                         <div className={cx("mt-1 inline-flex items-center gap-2 text-xs", textMuted)}>
                           {(() => {
-                            const Icon = categoryIconForName(q.category);
+                            const Icon = categoryIconForName(q.activityKind || domain);
                             return <Icon className="h-4 w-4" style={{ color: domainStyle.color }} />;
                           })()}
                           <span className="font-semibold" style={{ color: domainStyle.color }}>
-                            {categoryLabel(q.category)}
+                            {categoryLabel(domain)}
                           </span>
                           <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Major"}</Pill>
                         </div>
@@ -1916,8 +2081,41 @@ function QuestsPanel({
                       <div>
                         <div className={cx("text-xs font-semibold", textMuted)}>Domain</div>
                         <select
-                          value={q.category}
-                          onChange={(e) => updateQuest(q.id, { category: normalizeQuestCategory(e.target.value) })}
+                          value={domain}
+                          onChange={(e) => {
+                            const nextDomain = normalizeQuestCategory(e.target.value);
+                            const nextActivity = normalizeActivityKind(nextDomain, q.activityKind);
+                            const nextAllowed = allowedKindsForCategory(nextDomain, nextActivity);
+                            const nextMeasurement = nextAllowed.includes(measurementType) ? measurementType : nextAllowed[0];
+                            const nextUnitType = unitTypeForMeasurement(nextMeasurement);
+                            const nextUnit =
+                              nextMeasurement === "count"
+                                ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
+                                : defaultUnitForMeasurement(nextMeasurement);
+                            const nextTarget = measurementRequiresTarget(nextMeasurement)
+                              ? Math.max(1, Number(q.currentTargetValue) || 1)
+                              : 1;
+                            const nextSTarget = measurementRequiresTarget(nextMeasurement)
+                              ? Math.max(
+                                  1,
+                                  Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: nextDomain })
+                                )
+                              : 1;
+                            const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
+                            const nextGrace = nextMeasurement === "time" ? Number(q.graceMinutes ?? 10) : 0;
+                            updateQuest(q.id, {
+                              category: nextDomain,
+                              domain: nextDomain,
+                              activityKind: nextActivity,
+                              measurementType: nextMeasurement,
+                              unitType: nextUnitType,
+                              unit: nextUnit,
+                              currentTargetValue: nextTarget,
+                              sTargetValue: nextSTarget,
+                              targetMinutes: nextTargetMinutes,
+                              graceMinutes: nextGrace,
+                            });
+                          }}
                           className={cx(
                             "mt-1 w-full rounded-xl border p-2 text-sm",
                             isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
@@ -1926,6 +2124,100 @@ function QuestsPanel({
                           {QUEST_CATEGORIES.map((cat) => (
                             <option key={cat} value={cat}>
                               {categoryLabel(cat)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Activity Type</div>
+                        <select
+                          value={q.activityKind || activityOptions[0]?.id}
+                          onChange={(e) => {
+                            const nextActivity = normalizeActivityKind(domain, e.target.value);
+                            const nextAllowed = allowedKindsForCategory(domain, nextActivity);
+                            const nextMeasurement = nextAllowed.includes(measurementType) ? measurementType : nextAllowed[0];
+                            const nextUnitType = unitTypeForMeasurement(nextMeasurement);
+                            const nextUnit =
+                              nextMeasurement === "count"
+                                ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
+                                : defaultUnitForMeasurement(nextMeasurement);
+                            const nextTarget = measurementRequiresTarget(nextMeasurement)
+                              ? Math.max(1, Number(q.currentTargetValue) || 1)
+                              : 1;
+                            const nextSTarget = measurementRequiresTarget(nextMeasurement)
+                              ? Math.max(
+                                  1,
+                                  Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: domain })
+                                )
+                              : 1;
+                            const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
+                            const nextGrace = nextMeasurement === "time" ? Number(q.graceMinutes ?? 10) : 0;
+                            updateQuest(q.id, {
+                              activityKind: nextActivity,
+                              measurementType: nextMeasurement,
+                              unitType: nextUnitType,
+                              unit: nextUnit,
+                              currentTargetValue: nextTarget,
+                              sTargetValue: nextSTarget,
+                              targetMinutes: nextTargetMinutes,
+                              graceMinutes: nextGrace,
+                            });
+                          }}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        >
+                          {activityOptions.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Measure</div>
+                        <select
+                          value={measurementType}
+                          onChange={(e) => {
+                            const nextMeasurementRaw = normalizeMeasurementType(e.target.value);
+                            const nextMeasurement = allowedKinds.includes(nextMeasurementRaw) ? nextMeasurementRaw : allowedKinds[0];
+                            const nextUnitType = unitTypeForMeasurement(nextMeasurement);
+                            const nextUnit =
+                              nextMeasurement === "count"
+                                ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
+                                : defaultUnitForMeasurement(nextMeasurement);
+                            const nextTarget = measurementRequiresTarget(nextMeasurement)
+                              ? Math.max(1, Number(q.currentTargetValue) || 1)
+                              : 1;
+                            const nextSTarget = measurementRequiresTarget(nextMeasurement)
+                              ? Math.max(
+                                  1,
+                                  Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: domain })
+                                )
+                              : 1;
+                            const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
+                            const nextGrace = nextMeasurement === "time" ? Number(q.graceMinutes ?? 10) : 0;
+                            updateQuest(q.id, {
+                              measurementType: nextMeasurement,
+                              unitType: nextUnitType,
+                              unit: nextUnit,
+                              currentTargetValue: nextTarget,
+                              sTargetValue: nextSTarget,
+                              targetMinutes: nextTargetMinutes,
+                              graceMinutes: nextGrace,
+                            });
+                          }}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        >
+                          {allowedKinds.map((kind) => (
+                            <option key={kind} value={kind}>
+                              {measurementLabel(kind)}
                             </option>
                           ))}
                         </select>
@@ -1943,23 +2235,70 @@ function QuestsPanel({
                         />
                       </div>
 
-                      <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
-                        <select
-                          value={q.unitType}
-                          onChange={(e) => updateQuest(q.id, { unitType: normalizeUnitType(e.target.value) })}
-                          className={cx(
-                            "mt-1 w-full rounded-xl border p-2 text-sm",
-                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                          )}
-                        >
-                          {allowedKinds.map((kind) => (
-                            <option key={kind} value={kind}>
-                              {unitLabel(kind)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      {needsTarget ? (
+                        <>
+                          <div>
+                            <div className={cx("text-xs font-semibold", textMuted)}>Target</div>
+                            <input
+                              type="number"
+                              step={measurementType === "distance" ? "0.1" : "1"}
+                              value={q.currentTargetValue}
+                              onChange={(e) =>
+                                updateQuest(q.id, { currentTargetValue: Math.max(1, Number(e.target.value) || 1) })
+                              }
+                              className={cx(
+                                "mt-1 w-full rounded-xl border p-2 text-sm",
+                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                              )}
+                            />
+                          </div>
+
+                          <div>
+                            <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
+                            {measurementType === "count" ? (
+                              <input
+                                value={unitValue}
+                                onChange={(e) =>
+                                  updateQuest(q.id, {
+                                    unit: (e.target.value || defaultUnitForMeasurement(measurementType)).trim(),
+                                  })
+                                }
+                                className={cx(
+                                  "mt-1 w-full rounded-xl border p-2 text-sm",
+                                  isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                )}
+                              />
+                            ) : (
+                              <select
+                                value={unitValue}
+                                onChange={(e) => updateQuest(q.id, { unit: e.target.value })}
+                                className={cx(
+                                  "mt-1 w-full rounded-xl border p-2 text-sm",
+                                  isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                )}
+                              >
+                                <option value={unitValue}>{unitValue}</option>
+                              </select>
+                            )}
+                          </div>
+
+                          <div>
+                            <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
+                            <input
+                              type="number"
+                              step={measurementType === "distance" ? "0.1" : "1"}
+                              value={q.sTargetValue}
+                              onChange={(e) =>
+                                updateQuest(q.id, { sTargetValue: Math.max(1, Number(e.target.value) || 1) })
+                              }
+                              className={cx(
+                                "mt-1 w-full rounded-xl border p-2 text-sm",
+                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                              )}
+                            />
+                          </div>
+                        </>
+                      ) : null}
 
                       <div>
                         <div className={cx("text-xs font-semibold", textMuted)}>Priority</div>
@@ -1971,40 +2310,12 @@ function QuestsPanel({
                             isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
                           )}
                         >
-                        <option value="main">Major</option>
+                          <option value="main">Major</option>
                           <option value="minor">Minor</option>
                         </select>
                       </div>
 
-                      <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>Current Target</div>
-                        <input
-                          type="number"
-                          step={q.unitType === "distance" ? "0.1" : "1"}
-                          value={q.currentTargetValue}
-                          onChange={(e) => updateQuest(q.id, { currentTargetValue: Number(e.target.value) })}
-                          className={cx(
-                            "mt-1 w-full rounded-xl border p-2 text-sm",
-                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                          )}
-                        />
-                      </div>
-
-                      <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
-                        <input
-                          type="number"
-                          step={q.unitType === "distance" ? "0.1" : "1"}
-                          value={q.sTargetValue}
-                          onChange={(e) => updateQuest(q.id, { sTargetValue: Number(e.target.value) })}
-                          className={cx(
-                            "mt-1 w-full rounded-xl border p-2 text-sm",
-                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                          )}
-                        />
-                      </div>
-
-                      {q.unitType === "minutes" ? (
+                      {measurementType === "time" ? (
                         <>
                           <div>
                             <div className={cx("text-xs font-semibold", textMuted)}>Target Minutes</div>
@@ -2012,7 +2323,9 @@ function QuestsPanel({
                               type="number"
                               min="1"
                               value={q.targetMinutes ?? q.currentTargetValue}
-                              onChange={(e) => updateQuest(q.id, { targetMinutes: Number(e.target.value) })}
+                              onChange={(e) =>
+                                updateQuest(q.id, { targetMinutes: Math.max(1, Number(e.target.value) || 1) })
+                              }
                               className={cx(
                                 "mt-1 w-full rounded-xl border p-2 text-sm",
                                 isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
@@ -2025,7 +2338,7 @@ function QuestsPanel({
                               type="number"
                               min="0"
                               value={q.graceMinutes ?? 10}
-                              onChange={(e) => updateQuest(q.id, { graceMinutes: Number(e.target.value) })}
+                              onChange={(e) => updateQuest(q.id, { graceMinutes: Math.max(0, Number(e.target.value) || 0) })}
                               className={cx(
                                 "mt-1 w-full rounded-xl border p-2 text-sm",
                                 isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
@@ -2046,6 +2359,291 @@ function QuestsPanel({
   );
 }
 
+function ProgressDashboard({
+  dateKey,
+  state,
+  stats,
+  overallRank,
+  overallLevel,
+  streakDays,
+  overallProgressPctDisplay,
+  isDark,
+  border,
+  surface,
+  textMuted,
+}) {
+  const keys = Object.keys(state.days).filter((k) => k <= dateKey).sort();
+  const last7 = keys.slice(-7);
+  const bars = last7.map((k) => ({ key: k, xp: state.days[k]?.earnedXP || 0 }));
+  const totalXPWeek = bars.reduce((sum, b) => sum + b.xp, 0);
+
+  const domainTheme = {
+    body: { label: "Body", color: "#EF4444", Icon: IconDumbbell },
+    mind: { label: "Mind", color: "#3B82F6", Icon: Brain },
+    hobbies: { label: "Hobbies", color: "#22C55E", Icon: IconBook },
+    life: { label: "Life", color: "#EAB308", Icon: IconHome },
+  };
+
+  const categoryProgress = QUEST_CATEGORIES.map((cat) => {
+    const info = stats.categoryProgress?.[cat] || { progressPct: 0, rank: "E" };
+    return { cat, ...info };
+  });
+
+  const todayLabel = dateKey;
+  const penaltyToday = state.days[dateKey]?.xpDebt || 0;
+
+  function progressToNextRank(pct) {
+    const entryIdx = RANK_THRESHOLDS.findIndex((r) => pct >= r.min && pct <= r.max);
+    if (entryIdx < 0 || entryIdx === RANK_THRESHOLDS.length - 1) return 1;
+    const current = RANK_THRESHOLDS[entryIdx];
+    const next = RANK_THRESHOLDS[entryIdx + 1];
+    const span = Math.max(0.0001, next.min - current.min);
+    return clamp((pct - current.min) / span, 0, 1);
+  }
+
+  function StatCard({ title, value, subtitle, icon: Icon, accent }) {
+    return (
+      <div className={cx("rounded-2xl border p-4 shadow-sm", border, surface)} style={{ borderTopColor: accent, borderTopWidth: 3 }}>
+        <div className="flex items-center justify-between">
+          <div className={cx("text-xs font-semibold uppercase tracking-[0.2em]", textMuted)}>{title}</div>
+          <Icon className="h-5 w-5" style={{ color: accent }} />
+        </div>
+        <div className="mt-3 text-2xl font-black">{value}</div>
+        {subtitle ? <div className={cx("mt-1 text-xs font-semibold", textMuted)}>{subtitle}</div> : null}
+      </div>
+    );
+  }
+
+  function WeeklyXPChart() {
+    const weekStart = getWeekStart(new Date(`${dateKey}T00:00:00`), state.settings?.wakeTime, true);
+    const chartData = buildWeeklyChartData(state.xpByDay || {}, weekStart);
+    const hasData = chartData.some((d) => d.dailyXP > 0);
+    const totalXP = chartData[chartData.length - 1]?.cumulativeXP || 0;
+    const width = 320;
+    const height = 120;
+    const padding = 12;
+    const maxVal = Math.max(1, ...chartData.map((d) => d.cumulativeXP));
+    const stepX = (width - padding * 2) / Math.max(1, chartData.length - 1);
+    const lineColor = "#38BDF8";
+
+    const points = chartData.map((d, i) => {
+      const x = padding + i * stepX;
+      const y = height - padding - (d.cumulativeXP / maxVal) * (height - padding * 2);
+      return { ...d, x, y };
+    });
+
+    const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+    const areaPath = `${linePath} L ${padding + (chartData.length - 1) * stepX} ${height - padding} L ${padding} ${height - padding} Z`;
+
+    return (
+      <div className={cx("rounded-2xl border p-4", border, surface)}>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-extrabold">Weekly XP</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>Mon–Sun</div>
+          </div>
+          <div className={cx("text-xs font-semibold", textMuted)}>This week: {totalXP} XP</div>
+        </div>
+
+        {!hasData ? (
+          <div className={cx("mt-6 rounded-xl border p-4 text-sm", border, textMuted)}>
+            No XP earned yet this week.
+          </div>
+        ) : (
+          <>
+            <div className="mt-4">
+              <svg viewBox={`0 0 ${width} ${height}`} className="w-full">
+                <defs>
+                  <linearGradient id="xpGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={lineColor} stopOpacity="0.35" />
+                    <stop offset="100%" stopColor={lineColor} stopOpacity="0.05" />
+                  </linearGradient>
+                </defs>
+                <rect x="0" y="0" width={width} height={height} rx="12" fill={isDark ? "rgba(24,24,27,0.4)" : "rgba(248,250,252,1)"} />
+                {[0.25, 0.5, 0.75].map((t) => (
+                  <line
+                    key={t}
+                    x1={padding}
+                    x2={width - padding}
+                    y1={padding + t * (height - padding * 2)}
+                    y2={padding + t * (height - padding * 2)}
+                    stroke={isDark ? "rgba(63,63,70,0.6)" : "rgba(226,232,240,0.8)"}
+                    strokeWidth="1"
+                  />
+                ))}
+                <path d={areaPath} fill="url(#xpGradient)" stroke="none" />
+                <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2.5" />
+                {points.map((p) => (
+                  <circle key={p.dateKey} cx={p.x} cy={p.y} r="3.5" fill={lineColor}>
+                    <title>{`${p.dayLabel}: ${p.cumulativeXP} XP`}</title>
+                  </circle>
+                ))}
+              </svg>
+            </div>
+            <div className="mt-3 flex justify-between text-[10px] font-semibold text-zinc-500">
+              {points.map((p) => (
+                <span key={p.dateKey} style={{ width: `${100 / points.length}%`, textAlign: "center" }}>
+                  {p.dayLabel}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function DomainCard({ domain }) {
+    const theme = domainTheme[domain];
+    const info = categoryProgress.find((c) => c.cat === domain) || { progressPct: 0, rank: "E" };
+    const pctToS = Math.round(info.progressPct * 100);
+    const pctToNext = Math.round(progressToNextRank(info.progressPct) * 100);
+    const Icon = theme.Icon;
+    return (
+      <div className={cx("rounded-2xl border p-4 shadow-sm", border, surface)} style={{ borderLeft: `3px solid ${theme.color}` }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-extrabold">
+            <Icon className="h-4 w-4" style={{ color: theme.color }} />
+            <span>{theme.label}</span>
+          </div>
+          <span
+            className={cx(
+              "rounded-full px-2 py-1 text-xs font-semibold",
+              isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-600"
+            )}
+          >
+            Rank {info.rank}
+          </span>
+        </div>
+        <div className={cx("mt-3 text-xs font-semibold", textMuted)}>Progress to next rank</div>
+        <div className="mt-2">
+          <ProgressBar value={pctToNext} max={100} isDark={isDark} />
+        </div>
+        <div className={cx("mt-2 text-xs font-semibold", textMuted)}>{pctToS}% to S</div>
+      </div>
+    );
+  }
+
+  function OverallProgress() {
+    return (
+      <div className={cx("rounded-2xl border p-4 shadow-sm", border, surface)}>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-extrabold">Overall Progress</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>{overallProgressPctDisplay}% to S</div>
+          </div>
+          <span
+            className={cx(
+              "rounded-full px-2 py-1 text-xs font-semibold",
+              isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-600"
+            )}
+          >
+            Rank {overallRank}
+          </span>
+        </div>
+        <div className="mt-3">
+          <ProgressBar value={overallProgressPctDisplay} max={100} isDark={isDark} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {categoryProgress.map((cat) => {
+            const theme = domainTheme[cat.cat];
+            const pct = Math.round(cat.progressPct * 100);
+            return (
+              <span key={cat.cat} className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold" style={{ backgroundColor: rgba(theme.color, isDark ? 0.2 : 0.12), color: theme.color }}>
+                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: theme.color }} />
+                {theme.label} {pct}%
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  function AchievementsGrid() {
+    const tiers = [7, 14, 30, 50, 100];
+    const badges = tiers.map((days) => ({
+      id: `streak-${days}`,
+      days,
+      title: `${days}-Day Streak`,
+      desc: `Maintain a ${days}-day streak.`,
+      unlocked: streakDays >= days,
+    }));
+
+    return (
+      <div className={cx("rounded-2xl border p-4 shadow-sm", border, surface)}>
+        <div className="text-sm font-extrabold">Achievements</div>
+        <div className={cx("mt-1 text-xs", textMuted)}>Consistency streaks</div>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {badges.map((badge) => {
+            const glow = badge.unlocked ? (isDark ? "shadow-[0_0_20px_rgba(16,185,129,0.2)]" : "shadow-[0_0_20px_rgba(16,185,129,0.15)]") : "";
+            return (
+              <div
+                key={badge.id}
+                className={cx("rounded-2xl border p-3 transition", border, badge.unlocked ? glow : "opacity-70")}
+                style={{ borderColor: badge.unlocked ? "rgba(16,185,129,0.6)" : undefined }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-extrabold">{badge.title}</div>
+                  {badge.unlocked ? (
+                    <Trophy className="h-4 w-4 text-emerald-400" />
+                  ) : (
+                    <Lock className="h-4 w-4 text-zinc-400" />
+                  )}
+                </div>
+                <div className={cx("mt-1 text-xs", textMuted)}>{badge.desc}</div>
+                <div className="mt-3">
+                  {badge.unlocked ? (
+                    <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                      Unlocked
+                    </span>
+                  ) : (
+                    <span className={cx("rounded-full px-2 py-1 text-[10px] font-semibold", isDark ? "bg-zinc-800 text-zinc-300" : "bg-zinc-100 text-zinc-500")}>
+                      Locked
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-lg font-extrabold">Progress</div>
+          <div className={cx("mt-1 text-sm", textMuted)}>Last 7 days</div>
+        </div>
+        <div className={cx("text-xs font-semibold", textMuted)}>Updated: {todayLabel}</div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="Overall Level" value={overallLevel} subtitle={`Rank ${overallRank}`} icon={Medal} accent="#6366F1" />
+        <StatCard title="XP This Week" value={totalXPWeek} subtitle={`Today ${state.days[dateKey]?.earnedXP || 0} XP`} icon={Sparkles} accent="#6366F1" />
+        <StatCard title="Streak" value={`${streakDays} days`} subtitle="Keep it alive" icon={Flame} accent="#22C55E" />
+        <StatCard title="Penalty Today" value={penaltyToday} subtitle={penaltyToday ? "Clear to recover XP" : "No penalties"} icon={ShieldAlert} accent="#EF4444" />
+      </div>
+
+      <WeeklyXPChart />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {QUEST_CATEGORIES.map((cat) => (
+            <DomainCard key={cat} domain={cat} />
+          ))}
+        </div>
+        <OverallProgress />
+      </div>
+
+      <AchievementsGrid />
+    </div>
+  );
+}
+
 function StatsPanel({
   dateKey,
   state,
@@ -2058,148 +2656,21 @@ function StatsPanel({
   border,
   surface,
   textMuted,
-  setTab,
 }) {
-  const keys = Object.keys(state.days).filter((k) => k <= dateKey).sort();
-  const last7 = keys.slice(-7);
-
-  const bars = last7.map((k) => ({ key: k, xp: state.days[k]?.earnedXP || 0 }));
-  const maxXP = Math.max(1, ...bars.map((b) => b.xp));
-  const categoryProgress = QUEST_CATEGORIES.map((cat) => {
-    const info = stats.categoryProgress?.[cat] || { progressPct: 0, rank: "E" };
-    return { cat, ...info };
-  });
-
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-        <div className="text-lg font-extrabold">Stats</div>
-        <div className={cx("mt-1 text-sm", textMuted)}>Last 7 days XP</div>
-
-        <div className={cx("mt-4 rounded-2xl border p-4", border, surface)}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold">Performance Progress</div>
-              <div className={cx("mt-1 text-sm", textMuted)}>{overallProgressPctDisplay}% toward S benchmarks</div>
-            </div>
-            <div className="w-full sm:w-1/2">
-              <ProgressBar value={overallProgressPctDisplay} max={100} isDark={isDark} />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-7 gap-2">
-          {bars.map((b) => {
-            const h = Math.round((b.xp / maxXP) * 100);
-            const isToday = b.key === dateKey;
-            return (
-              <div key={b.key} className="flex flex-col items-center gap-2">
-                <div className={cx("relative h-24 w-full rounded-xl border p-1", border, isDark ? "bg-zinc-950/10" : "bg-white")}>
-                  <div className={cx("absolute bottom-1 left-1 right-1 rounded-lg", isDark ? "bg-zinc-100" : "bg-zinc-900")} style={{ height: `${h}%` }} />
-                </div>
-                <div className={cx("text-[10px] font-bold", isToday ? (isDark ? "text-zinc-100" : "text-zinc-900") : "text-zinc-500")}>
-                  {b.key.slice(5)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <div className={cx("rounded-xl border p-3", border)}>
-            <div className={cx("text-xs", textMuted)}>Overall Rank</div>
-            <div className="mt-1 text-lg font-black">{overallRank}</div>
-          </div>
-          <div className={cx("rounded-xl border p-3", border)}>
-            <div className={cx("text-xs", textMuted)}>Overall Level</div>
-            <div className="mt-1 text-lg font-black">{overallLevel}</div>
-          </div>
-          <div className={cx("rounded-xl border p-3", border)}>
-            <div className={cx("text-xs", textMuted)}>Streak</div>
-            <div className="mt-1 text-lg font-black">{streakDays}</div>
-          </div>
-          <div className={cx("rounded-xl border p-3", border)}>
-            <div className={cx("text-xs", textMuted)}>Debt (today)</div>
-            <div className="mt-1 text-lg font-black">{state.days[dateKey]?.xpDebt || 0}</div>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <div className="text-sm font-extrabold">Quest consistency (last 14 days)</div>
-          <div className="mt-3 space-y-2">
-            {state.quests.map((q) => {
-              const done = stats.questDone[q.id] || 0;
-              const tot = stats.questTotals[q.id] || 0;
-              const pct = tot ? Math.round((done / tot) * 100) : 0;
-              return (
-                <div key={q.id} className={cx("rounded-xl border p-3", border)}>
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-bold">{q.name}</div>
-                    <div className={cx("text-xs font-semibold", textMuted)}>
-                      {done}/{tot}
-                    </div>
-                  </div>
-                  <div className="mt-2">
-                    <ProgressBar value={pct} max={100} isDark={isDark} />
-                    <div className={cx("mt-1 text-xs", textMuted)}>{pct}%</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </Card>
-
-      <div className="space-y-4">
-        <Card className="p-4" border={border} surface={surface}>
-          <div className="text-sm font-extrabold">System Status</div>
-          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Total XP</div>
-              <div className="mt-1 text-lg font-black">{state.totalXP}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Today XP</div>
-              <div className="mt-1 text-lg font-black">{state.days[dateKey]?.earnedXP || 0}</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Compliance (30d)</div>
-              <div className="mt-1 text-lg font-black">{stats.compliance}%</div>
-            </div>
-            <div className={cx("rounded-xl border p-3", border)}>
-              <div className={cx("text-xs", textMuted)}>Avg XP (active)</div>
-              <div className="mt-1 text-lg font-black">{stats.avgXP}</div>
-            </div>
-          </div>
-          <div className="mt-4 space-y-3">
-            {categoryProgress.map((cat) => (
-              <div key={cat.cat} className={cx("rounded-xl border p-3", border)}>
-                <div className="flex items-center justify-between">
-              <div className={cx("text-xs font-semibold", textMuted)}>{categoryLabel(cat.cat)} Rank</div>
-              <div className="text-xs font-bold">Rank {cat.rank}</div>
-            </div>
-            <div className="mt-2 text-xs font-semibold">{Math.round(cat.progressPct * 100)}% toward S</div>
-            <div className="mt-2">
-              <ProgressBar value={Math.round(cat.progressPct * 100)} max={100} isDark={isDark} />
-            </div>
-          </div>
-        ))}
-          </div>
-        </Card>
-
-        <Card className="p-4" border={border} surface={surface}>
-          <div className="text-sm font-extrabold">Actions</div>
-          <div className="mt-3 space-y-2">
-            <Button variant="outline" onClick={() => setTab("calendar")} className="w-full" isDark={isDark}>
-              Open Calendar
-            </Button>
-            <Button variant="outline" onClick={() => setTab("quests")} className="w-full" isDark={isDark}>
-              Edit Quests
-            </Button>
-          </div>
-        </Card>
-      </div>
-    </div>
+    <ProgressDashboard
+      dateKey={dateKey}
+      state={state}
+      stats={stats}
+      overallRank={overallRank}
+      overallLevel={overallLevel}
+      streakDays={streakDays}
+      overallProgressPctDisplay={overallProgressPctDisplay}
+      isDark={isDark}
+      border={border}
+      surface={surface}
+      textMuted={textMuted}
+    />
   );
 }
 
@@ -2507,7 +2978,8 @@ export default function LevelUpQuestBoard() {
   const [tab, setTab] = useState("home");
   const [state, setState] = useState(() => {
     const key = fmtDateKey(today());
-    const saved = safeJsonParse(localStorage.getItem(STORAGE_KEY) || "", null);
+    const savedRaw = safeJsonParse(localStorage.getItem(STORAGE_KEY) || "", null);
+    const saved = migrateSavedState(savedRaw) || savedRaw;
     if (saved && typeof saved === "object") {
       const normalizedQuests = (saved.quests || DEFAULT_QUESTS).map((q) => {
         const createdAt = typeof q.createdAt === "number" ? q.createdAt : 0;
@@ -2554,6 +3026,9 @@ export default function LevelUpQuestBoard() {
         saved.days && Object.keys(saved.days).length
           ? saved.days
           : { [key]: { completed: {}, earnedXP: 0, xpDebt: 0, note: "", debtApplied: false } };
+      const xpByDay = saved.xpByDay
+        ? { ...saved.xpByDay }
+        : Object.fromEntries(Object.entries(days).map(([dayKey, entry]) => [dayKey, Number(entry?.earnedXP || 0)]));
       return {
         quests,
         totalXP,
@@ -2569,6 +3044,10 @@ export default function LevelUpQuestBoard() {
         days,
         lastActiveDate: saved.lastActiveDate || key,
         cooldownUntil: saved.cooldownUntil || null,
+        weeklyChallenge: saved.weeklyChallenge || null,
+        mysteryBox: saved.mysteryBox || null,
+        schemaVersion: SCHEMA_VERSION,
+        xpByDay,
       };
     }
     return buildDefaultState();
@@ -2753,10 +3232,10 @@ export default function LevelUpQuestBoard() {
     if (!settings.weeklyBossEnabled) return null;
 
     const totalReps = state.quests
-      .filter((q) => q.unitType === "reps")
+      .filter((q) => q.measurementType === "reps")
       .reduce((sum, q) => sum + (q.currentTargetValue || 0), 0);
 
-    const dist = state.quests.find((q) => q.unitType === "distance");
+    const dist = state.quests.find((q) => q.measurementType === "distance");
     const runTarget = dist ? Math.min(5, Math.round(dist.currentTargetValue * 1.5 * 10) / 10) : 1;
 
     return {
@@ -2837,7 +3316,10 @@ export default function LevelUpQuestBoard() {
         const nextXP = Math.max(0, (quest.xp || 0) + credited);
         const nextBaseline = !was && quest.currentTargetValue > quest.baselineValue ? quest.currentTargetValue : quest.baselineValue;
         const isTimed = questIsTimed(quest);
-        if (!isTimed) return { ...quest, xp: nextXP, baselineValue: nextBaseline };
+        if (!isTimed) {
+          const nextStatus = !was ? "completed" : "idle";
+          return { ...quest, xp: nextXP, baselineValue: nextBaseline, status: nextStatus, startedAt: null, elapsedMs: 0 };
+        }
         const nextStatus = !was ? "completed" : "idle";
         const elapsedMs = !was
           ? quest.startedAt
@@ -2858,58 +3340,63 @@ export default function LevelUpQuestBoard() {
         ...prev,
         quests: updatedQuests,
         totalXP: Math.max(0, prev.totalXP + credited),
+        xpByDay: incrementXpByDay(prev.xpByDay, key, credited),
         days: { ...prev.days, [key]: newDay },
       };
     });
   }
 
-  function startTimedQuest(questId) {
+  function startQuest(questId) {
     setState((prev) => ({
       ...prev,
       quests: prev.quests.map((q) => {
         if (q.id !== questId) return q;
-        if (!questIsTimed(q)) return q;
+        if (!questIsTimed(q)) return { ...q, status: "active", startedAt: null, elapsedMs: 0 };
         return { ...q, status: "active", startedAt: Date.now(), elapsedMs: 0 };
       }),
     }));
   }
 
-  function pauseTimedQuest(questId) {
+  function pauseQuest(questId) {
     setState((prev) => ({
       ...prev,
       quests: prev.quests.map((q) => {
         if (q.id !== questId) return q;
-        if (!questIsTimed(q) || q.status !== "active") return q;
+        if (q.status !== "active") return q;
+        if (!questIsTimed(q)) return { ...q, status: "paused" };
         const elapsedMs = q.startedAt ? Math.max(0, Date.now() - q.startedAt) : q.elapsedMs || 0;
         return { ...q, status: "paused", elapsedMs, startedAt: null };
       }),
     }));
   }
 
-  function resumeTimedQuest(questId) {
+  function resumeQuest(questId) {
     setState((prev) => ({
       ...prev,
       quests: prev.quests.map((q) => {
         if (q.id !== questId) return q;
-        if (!questIsTimed(q) || q.status !== "paused") return q;
+        if (q.status !== "paused") return q;
+        if (!questIsTimed(q)) return { ...q, status: "active" };
         const elapsedMs = q.elapsedMs || 0;
         return { ...q, status: "active", startedAt: Date.now() - elapsedMs };
       }),
     }));
   }
 
-  function completeTimedQuest(questId) {
+  function completeQuest(questId) {
     const quest = state.quests.find((q) => q.id === questId);
-    if (!quest || !questIsTimed(quest)) return;
+    if (!quest) return;
     if (settings.blockAfterBedtime && !isWithinDayWindow(settings, new Date())) {
       setToastMessage("Outside your day window — completion won’t count.");
       return;
     }
-    const elapsed = quest.startedAt ? Date.now() - quest.startedAt : quest.elapsedMs || 0;
-    const limit = questTimerLimitMs(quest);
-    if (limit && elapsed > limit) {
-      setToastMessage("Timer ended — quest not accepted.");
-      return;
+    if (questIsTimed(quest)) {
+      const elapsed = quest.startedAt ? Date.now() - quest.startedAt : quest.elapsedMs || 0;
+      const limit = questTimerLimitMs(quest);
+      if (limit && elapsed > limit) {
+        setToastMessage("Timer ended — quest not accepted.");
+        return;
+      }
     }
     toggleQuestDone(questId);
   }
@@ -2947,17 +3434,10 @@ export default function LevelUpQuestBoard() {
       return {
         ...prev,
         totalXP: Math.max(0, prev.totalXP + credited),
+        xpByDay: incrementXpByDay(prev.xpByDay, dateKey, credited),
         days: { ...prev.days, [bossKey]: updated },
       };
     });
-  }
-
-  function attemptToggleQuestDone(questId) {
-    if (settings.blockAfterBedtime && !isWithinDayWindow(settings, new Date())) {
-      setToastMessage("Outside your day window — completion won’t count.");
-      return;
-    }
-    toggleQuestDone(questId);
   }
 
   function attemptToggleBossDone() {
@@ -2981,8 +3461,12 @@ export default function LevelUpQuestBoard() {
 
   function addQuest() {
     const id = `q_${Math.random().toString(16).slice(2)}`;
-    const unitType = "reps";
     const category = "body";
+    const domain = "body";
+    const activityKind = "strength";
+    const measurementType = "reps";
+    const unitType = unitTypeForMeasurement(measurementType);
+    const unit = defaultUnitForMeasurement(measurementType);
     const currentTargetValue = 10;
     const createdAt = Date.now();
     setState((prev) => ({
@@ -2992,6 +3476,10 @@ export default function LevelUpQuestBoard() {
           id,
           name: "New Quest",
           category,
+          domain,
+          activityKind,
+          measurementType,
+          unit,
           unitType,
           currentTargetValue,
           sTargetValue: defaultSTargetValue({ name: "New Quest", unitType, category }),
@@ -3045,7 +3533,7 @@ export default function LevelUpQuestBoard() {
       body: { progressPct: 0, rank: "E" },
       mind: { progressPct: 0, rank: "E" },
       hobbies: { progressPct: 0, rank: "E" },
-      productivity: { progressPct: 0, rank: "E" },
+      life: { progressPct: 0, rank: "E" },
     };
     for (const category of QUEST_CATEGORIES) {
       const list = state.quests.filter((q) => q.category === category);
@@ -3144,14 +3632,13 @@ export default function LevelUpQuestBoard() {
           settings={settings}
           boss={boss}
           bossDone={bossDone}
-          toggleQuestDone={attemptToggleQuestDone}
           toggleBossDone={attemptToggleBossDone}
           isWithinWindowNow={isWithinWindowNow}
           timerTick={timerTick}
-          onTimedStart={startTimedQuest}
-          onTimedPause={pauseTimedQuest}
-          onTimedResume={resumeTimedQuest}
-          onTimedComplete={completeTimedQuest}
+          onQuestStart={startQuest}
+          onQuestPause={pauseQuest}
+          onQuestResume={resumeQuest}
+          onQuestComplete={completeQuest}
           textMuted={textMuted}
           textSoft={textSoft}
           isDark={isDark}
@@ -3160,6 +3647,19 @@ export default function LevelUpQuestBoard() {
           updateQuest={updateQuest}
           addQuest={addQuest}
           deleteQuest={deleteQuest}
+        />
+      ) : null}
+      {tab === "do-different" ? (
+        <DoDifferent
+          state={state}
+          setState={setState}
+          settings={settings}
+          dateKey={dateKey}
+          nowTick={nowTick}
+          isDark={isDark}
+          border={border}
+          surface={surface}
+          textMuted={textMuted}
         />
       ) : null}
       {tab === "stats" ? (
@@ -3175,7 +3675,6 @@ export default function LevelUpQuestBoard() {
           border={border}
           surface={surface}
           textMuted={textMuted}
-          setTab={setTab}
         />
       ) : null}
       {tab === "settings" ? (

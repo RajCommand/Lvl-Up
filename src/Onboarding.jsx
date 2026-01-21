@@ -3,15 +3,20 @@ import { CATEGORY_OPTIONS, TASK_TEMPLATES } from "./onboarding/taskTemplates.js"
 import mindPic from "./assets/onboardingpics/mind1pic.jpeg";
 import hobbiesPic from "./assets/onboardingpics/hobbies1pic.jpeg";
 import bodyPic from "./assets/onboardingpics/body1pic.jpeg";
-import productivityPic from "./assets/onboardingpics/Productivity1pic.jpeg";
+import lifePic from "./assets/onboardingpics/Productivity1pic.jpeg";
 
 function cx(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
-function unitLabel(unitType) {
-  if (unitType === "distance") return "km";
-  if (unitType === "minutes") return "min";
+function unitLabel(task) {
+  const measurementType =
+    task.measurementType || (task.unitType === "minutes" ? "time" : task.unitType === "distance" ? "distance" : "reps");
+  if (measurementType === "habit") return "habit";
+  if (task.unit) return task.unit;
+  if (measurementType === "distance") return "km";
+  if (measurementType === "time") return "min";
+  if (measurementType === "count") return "x";
   return "reps";
 }
 
@@ -63,10 +68,10 @@ const PRESET_VALUES = {
 const TERMS_TITLE = "Set Your Terms.";
 
 const DOMAIN_COLORS = {
-  body: "#3B82F6",
-  mind: "#EF4444",
+  body: "#EF4444",
+  mind: "#3B82F6",
   hobbies: "#22C55E",
-  productivity: "#EAB308",
+  life: "#EAB308",
 };
 
 const colorForDomain = (domain) => DOMAIN_COLORS[String(domain || "").toLowerCase()] || "#9CA3AF";
@@ -87,6 +92,7 @@ function rgba(hex, alpha) {
 
 function presetForTask(task, presetId) {
   const name = String(task.name || "").toLowerCase();
+  if (task.measurementType === "habit") return [1, 1];
   if (name.includes("push")) return PRESET_VALUES.push[presetId];
   if (name.includes("pull")) return PRESET_VALUES.pull[presetId];
   if (name.includes("run") || name.includes("jog")) return PRESET_VALUES.run[presetId];
@@ -94,8 +100,8 @@ function presetForTask(task, presetId) {
   if (name.includes("focus") || name.includes("no-phone")) return PRESET_VALUES.focus[presetId];
   if (name.includes("read")) return PRESET_VALUES.read[presetId];
   if (name.includes("study") || name.includes("learn")) return PRESET_VALUES.study[presetId];
-  if (task.unitType === "distance") return PRESET_VALUES.defaultDistance[presetId];
-  if (task.unitType === "minutes") return PRESET_VALUES.defaultMinutes[presetId];
+  if (task.measurementType === "distance" || task.unitType === "distance") return PRESET_VALUES.defaultDistance[presetId];
+  if (task.measurementType === "time" || task.unitType === "minutes") return PRESET_VALUES.defaultMinutes[presetId];
   return PRESET_VALUES.defaultReps[presetId];
 }
 
@@ -241,10 +247,10 @@ export default function Onboarding({ onComplete }) {
       subtitle: "Skills, learning, and creation",
       image: hobbiesPic,
     },
-    productivity: {
-      title: "Productivity",
+    life: {
+      title: "Life",
       subtitle: "Execution and daily discipline",
-      image: productivityPic,
+      image: lifePic,
     },
   }), []);
 
@@ -254,7 +260,7 @@ export default function Onboarding({ onComplete }) {
       const templates = TASK_TEMPLATES[cat] || [];
       for (const t of templates) {
         if (selectedTasks.has(t.id)) {
-          tasks.push({ ...t, category: cat });
+          tasks.push({ ...t, category: cat, domain: cat });
         }
       }
     }
@@ -735,7 +741,7 @@ export default function Onboarding({ onComplete }) {
                                     <div>
                                       <div className="text-sm font-extrabold" style={{ color: rgba(domainColor, 0.9) }}>{t.name}</div>
                                       <div className={cx("text-xs", isDark ? "text-zinc-400" : "text-zinc-600")}>
-                                        Unit: {unitLabel(t.unitType)}
+                                        Unit: {unitLabel(t)}
                                       </div>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
