@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Brain, ChevronDown, ChevronUp } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Brain, ChevronDown, ChevronUp, Eye, ChevronLeft, ChevronRight } from "lucide-react";
 import { DayTimerClock } from "./components/DayTimerClock";
+import QuoteOfTheDay from "./components/QuoteOfTheDay";
 
 /**
  * Level Up: Quest Board — Solo Leveling–inspired MVP (single-file)
@@ -76,6 +77,15 @@ function formatDuration(minutes) {
   return `${h}:${pad2(m)}`;
 }
 
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${pad2(m)}:${pad2(s)}`;
+  return `${m}:${pad2(s)}`;
+}
+
 function computeAge(dob) {
   if (!dob) return null;
   const parsed = new Date(dob);
@@ -96,6 +106,16 @@ function isWithinDayWindow(settings, now = new Date()) {
   let nowMin = now.getHours() * 60 + now.getMinutes();
   if (nowMin < wakeMin) nowMin += 1440;
   return nowMin >= wakeMin && nowMin <= bedMin;
+}
+
+function questIsTimed(q) {
+  return typeof q.targetMinutes === "number" && q.targetMinutes > 0;
+}
+
+function questTimerLimitMs(q) {
+  if (!questIsTimed(q)) return 0;
+  const grace = typeof q.graceMinutes === "number" ? q.graceMinutes : 0;
+  return (q.targetMinutes + grace) * 60 * 1000;
 }
 
 function today() {
@@ -366,10 +386,18 @@ function normalizeQuest(q) {
   const rawPriority = String(q.priority || (q.tier === "Side" ? "minor" : "main")).toLowerCase();
   const priority = rawPriority === "minor" ? "minor" : "main";
   const xpRaw = Number(q.xp ?? 0);
+  const targetMinutesRaw = Number(q.targetMinutes ?? (safeUnitType === "minutes" ? currentTargetValue : NaN));
+  const targetMinutes = Number.isFinite(targetMinutesRaw) ? Math.max(1, targetMinutesRaw) : null;
+  const graceMinutesRaw = Number(q.graceMinutes ?? (targetMinutes ? 10 : 0));
+  const graceMinutes = Number.isFinite(graceMinutesRaw) ? Math.max(0, graceMinutesRaw) : 0;
+  const status = q.status === "active" || q.status === "completed" ? q.status : "idle";
+  const startedAt = typeof q.startedAt === "number" ? q.startedAt : null;
+  const elapsedMs = typeof q.elapsedMs === "number" ? q.elapsedMs : 0;
   const pct = progressPct(currentTargetValue, sTargetValue);
   const rank = rankFromProgressPct(pct);
   const cap = xpCapForRank(rank);
   const xp = Number.isFinite(xpRaw) ? Math.min(xpRaw, cap) : 0;
+  const safeStatus = status === "active" && !startedAt ? "idle" : status;
   return {
     ...q,
     category,
@@ -380,6 +408,11 @@ function normalizeQuest(q) {
     priority,
     xp,
     createdAt,
+    status: safeStatus,
+    startedAt: safeStatus === "active" ? startedAt : null,
+    elapsedMs: safeStatus === "completed" ? elapsedMs : 0,
+    targetMinutes,
+    graceMinutes,
   };
 }
 
@@ -595,13 +628,14 @@ function DayInspector({ state, selectedDay, setState, isDark, border, surface, t
   );
 }
 
-function DayModalContent({ dayKey, state, setState, isDark, border, textMuted }) {
+function DayModalContent({ dayKey, state, setState, settings, isDark, border, textMuted }) {
   const entry = state.days[dayKey] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "" };
   const completed = state.quests.filter((q) => !!entry.completed?.[q.id]?.done);
+  const missedQuests = state.quests.filter((q) => !entry.completed?.[q.id]?.done);
   const missed = entry.note === "(missed)";
 
   return (
-    <div className="space-y-4">
+    <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
       <div className="grid grid-cols-2 gap-3">
         <div className={cx("rounded-xl border p-3", border)}>
           <div className={cx("text-xs", textMuted)}>XP gained</div>
@@ -622,7 +656,7 @@ function DayModalContent({ dayKey, state, setState, isDark, border, textMuted })
         </div>
       ) : null}
 
-      {entry.xpDebt > 0 ? (
+      {settings?.xpDebtEnabled && entry.xpDebt > 0 ? (
         <div
           className={cx(
             "rounded-xl border p-3 text-sm",
@@ -658,6 +692,31 @@ function DayModalContent({ dayKey, state, setState, isDark, border, textMuted })
           ) : (
             <div className={cx("rounded-xl border p-3 text-sm", border)}>
               <div className={cx("text-xs", textMuted)}>No completed quests recorded for this day.</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-extrabold">Missed</div>
+          <Pill tone={missedQuests.length ? "warn" : "good"} isDark={isDark}>
+            {missedQuests.length ? "Incomplete" : "All clear"}
+          </Pill>
+        </div>
+        <div className="mt-2 space-y-2">
+          {missedQuests.length ? (
+            missedQuests.map((q) => (
+              <div key={q.id} className={cx("rounded-xl border p-3", border)}>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-bold">{q.name}</div>
+                  <Pill isDark={isDark}>Missed</Pill>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className={cx("rounded-xl border p-3 text-sm", border)}>
+              <div className={cx("text-xs", textMuted)}>Nothing missed for this day.</div>
             </div>
           )}
         </div>
@@ -781,6 +840,15 @@ function IconTrendingUp({ className = "" }) {
   );
 }
 
+function IconHome({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11l9-7 9 7" />
+      <path d="M5 10v10h14V10" />
+    </svg>
+  );
+}
+
 function IconBook({ className = "" }) {
   return (
     <svg viewBox="0 0 24 24" className={className} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -801,8 +869,7 @@ function IconTag({ className = "" }) {
 
 function BottomTabs({ tab, setTab, isDark }) {
   const items = [
-    { id: "today", label: "Today", Icon: IconCheckCircle },
-    { id: "calendar", label: "Calendar", Icon: IconCalendar },
+    { id: "home", label: "Home", Icon: IconHome },
     { id: "quests", label: "Quests", Icon: IconList },
     { id: "stats", label: "Stats", Icon: IconChart },
   ];
@@ -816,7 +883,7 @@ function BottomTabs({ tab, setTab, isDark }) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 px-4 pb-[max(env(safe-area-inset-bottom),12px)]">
       <div className={cx("mx-auto max-w-2xl rounded-2xl border px-2 py-3 shadow-2xl backdrop-blur", frameCls)}>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {items.map((it) => {
             const active = tab === it.id;
             const Icon = it.Icon;
@@ -844,57 +911,55 @@ function BottomTabs({ tab, setTab, isDark }) {
 }
 
 function Header() {
-  return (
-    <div className="mb-6 flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-black tracking-tight">Level Up</h1>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  );
+  return null;
 }
 
-function TodayPanel({
-  state,
-  todays,
-  settings,
-  playerName,
-  playerAge,
-  playerPhoto,
-  onPhotoChange,
-  onOpenSettings,
-  overallRank,
-  totalXP,
-  boss,
-  bossDone,
-  toggleQuestDone,
-  toggleBossDone,
-  isWithinWindowNow,
+  function HomePanel({
+    dateKey,
+    settings,
+    playerName,
+    playerAge,
+    playerPhoto,
+    onPhotoChange,
+    onOpenSettings,
+    overallRank,
+    totalXP,
+    state,
+    setState,
+    joinDateKey,
+    calCursor,
+    setCalCursor,
+    selectedDay,
+    setSelectedDay,
+    dayModalOpen,
+  setDayModalOpen,
+  modalDayKey,
+  setModalDayKey,
+  weeks,
+  monthName,
   isDark,
   border,
   surface,
   textMuted,
-  textSoft,
 }) {
-  const doneCount = state.quests.filter((q) => !!todays.completed?.[q.id]?.done).length;
-  const total = state.quests.length;
-  const percent = total ? Math.round((doneCount / total) * 100) : 0;
-
-  const debt = todays.xpDebt || 0;
-  const categories = [
-    { id: "body", label: "Body" },
-    { id: "mind", label: "Mind" },
-    { id: "hobbies", label: "Hobbies" },
-    { id: "productivity", label: "Productivity" },
-  ];
-
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
+        <div className="flex items-center justify-between">
+          <div className="text-2xl font-black leading-8 tracking-tight">Level Up</div>
+          <button
+            className={cx(
+              "inline-flex h-8 w-8 items-center justify-center rounded-full border transition",
+              isDark ? "border-zinc-800 bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200 bg-white hover:bg-zinc-50"
+            )}
+            onClick={onOpenSettings}
+            aria-label="Open settings"
+            title="Settings"
+          >
+            <IconGear className="h-4 w-4" />
+          </button>
+        </div>
+
         <Card className="p-4" border={border} surface={surface}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
             <div className="flex min-w-0 flex-1 gap-5">
@@ -937,18 +1002,7 @@ function TodayPanel({
                     isDark ? "border-zinc-800 bg-zinc-950/40" : "border-zinc-200 bg-zinc-50"
                   )}
                 >
-                    <div className={cx("text-sm font-semibold uppercase tracking-[0.2em]", textMuted)}>Leveler</div>
-                  <button
-                    className={cx(
-                      "inline-flex h-8 w-8 items-center justify-center rounded-full border transition",
-                      isDark ? "border-zinc-800 bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200 bg-white hover:bg-zinc-50"
-                    )}
-                    onClick={onOpenSettings}
-                    aria-label="Open settings"
-                    title="Settings"
-                  >
-                    <IconGear className="h-4 w-4" />
-                  </button>
+                  <div className={cx("text-sm font-semibold uppercase tracking-[0.2em]", textMuted)}>Leveler</div>
                 </div>
                 <div className="mt-3 space-y-1">
                   <div className={cx("text-sm font-semibold", isDark ? "text-zinc-50" : "text-zinc-900")}>
@@ -969,6 +1023,8 @@ function TodayPanel({
           </div>
         </Card>
 
+        <QuoteOfTheDay isDark={isDark} border={border} surface={surface} textMuted={textMuted} />
+
         <DayTimerClock
           wakeTime={settings.wakeTime}
           bedTime={settings.bedTime}
@@ -979,172 +1035,529 @@ function TodayPanel({
           Card={Card}
         />
 
-        <Card className="p-4" border={border} surface={surface}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-lg font-extrabold">Today’s Quests</div>
-              <div className={cx("mt-1 text-sm", textMuted)}>
-                {fmtDateKey(today())} • {doneCount}/{total} completed • {todays.earnedXP || 0} XP gained today
-              </div>
-            </div>
-            <Pill tone={percent >= 80 ? "good" : percent >= 40 ? "warn" : "bad"} isDark={isDark}>
-              {percent}%
-            </Pill>
-          </div>
+        <HomeCalendarSection
+          dateKey={dateKey}
+          state={state}
+          settings={settings}
+          setState={setState}
+          joinDateKey={joinDateKey}
+          calCursor={calCursor}
+          setCalCursor={setCalCursor}
+          selectedDay={selectedDay}
+          setSelectedDay={setSelectedDay}
+          dayModalOpen={dayModalOpen}
+          setDayModalOpen={setDayModalOpen}
+          modalDayKey={modalDayKey}
+          setModalDayKey={setModalDayKey}
+          weeks={weeks}
+          monthName={monthName}
+          isDark={isDark}
+          border={border}
+          surface={surface}
+          textMuted={textMuted}
+        />
+      </div>
+    </div>
+  );
+}
 
-          {debt > 0 && settings.xpDebtEnabled ? (
-            <div
+function HomeCalendarSection({
+  dateKey,
+  state,
+  settings,
+  setState,
+  joinDateKey,
+  calCursor,
+  setCalCursor,
+  selectedDay,
+  setSelectedDay,
+  dayModalOpen,
+  setDayModalOpen,
+  modalDayKey,
+  setModalDayKey,
+  weeks,
+  monthName,
+  isDark,
+  border,
+  surface,
+  textMuted,
+}) {
+  const [viewMode, setViewMode] = useState("month");
+  const [showHint, setShowHint] = useState(false);
+  const todayDate = new Date(dateKey);
+  const totalQuests = state.quests.length;
+
+  function dayStatus(date) {
+    const key = fmtDateKey(date);
+    if (key <= joinDateKey) return "inactive";
+    const entry = state.days[key];
+    const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const isFuture = dateOnly > todayDate;
+    if (isFuture || !totalQuests) return "none";
+    const doneCount = state.quests.filter((q) => !!entry?.completed?.[q.id]?.done).length;
+    if (doneCount === 0) return "missed";
+    if (doneCount >= totalQuests) return "good";
+    return "partial";
+  }
+
+  const toneCls = {
+    good: isDark ? "bg-emerald-900/40 text-emerald-100" : "bg-emerald-200 text-emerald-900",
+    partial: isDark ? "bg-amber-900/40 text-amber-100" : "bg-amber-200 text-amber-900",
+    missed: isDark ? "bg-rose-900/40 text-rose-100" : "bg-rose-200 text-rose-900",
+    inactive: isDark ? "bg-zinc-900/40 text-zinc-300" : "bg-zinc-100 text-zinc-500",
+    none: "bg-transparent",
+  };
+
+  const weekStart = startOfWeek(new Date(selectedDay));
+  const weekDates = Array.from({ length: 7 }).map((_, idx) => {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + idx);
+    return d;
+  });
+
+  function moveWeek(delta) {
+    const d = new Date(selectedDay);
+    d.setDate(d.getDate() + delta * 7);
+    setSelectedDay(fmtDateKey(d));
+  }
+
+  return (
+    <Card className="p-4" border={border} surface={surface}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-lg font-extrabold">Progress</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div
+            className={cx(
+              "flex items-center gap-1 rounded-full border p-1",
+              isDark ? "border-zinc-800 bg-zinc-950/40" : "border-zinc-200 bg-zinc-50"
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => setViewMode("week")}
               className={cx(
-                "mt-3 rounded-xl border p-3 text-sm",
-                isDark ? "border-amber-900/40 bg-amber-900/20 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
+                "rounded-full px-3 py-1 text-xs font-semibold transition",
+                viewMode === "week" ? (isDark ? "bg-white text-black" : "bg-black text-white") : textMuted
               )}
             >
-              <div className="font-semibold">XP Debt active</div>
-              <div>{debt} XP must be repaid before rewards apply.</div>
-            </div>
-          ) : null}
-          {settings.blockAfterBedtime && !isWithinWindowNow ? (
-            <div
+              Week
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("month")}
               className={cx(
-                "mt-3 rounded-xl border p-3 text-sm",
-                isDark ? "border-red-900/40 bg-red-900/20 text-red-100" : "border-red-200 bg-red-50 text-red-900"
+                "rounded-full px-3 py-1 text-xs font-semibold transition",
+                viewMode === "month" ? (isDark ? "bg-white text-black" : "bg-black text-white") : textMuted
               )}
             >
-              <div className="font-semibold">Outside time window</div>
-              <div>Completions will not count until your wake-to-bed window is active.</div>
-            </div>
-          ) : null}
-
-          <div className="mt-4 space-y-4">
-            {categories.map((cat) => {
-              const quests = state.quests
-                .filter((q) => q.category === cat.id)
-                .sort((a, b) => {
-                  if (a.priority !== b.priority) return a.priority === "main" ? -1 : 1;
-                  return (b.createdAt || 0) - (a.createdAt || 0);
-                });
-              if (!quests.length) return null;
-              const Icon = categoryIconForName(cat.label);
-              const headerColor = getDomainColor(cat.id);
-              return (
-                <div key={cat.id} className="space-y-2">
-                  <div className={cx("flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]", textMuted)} style={{ color: headerColor }}>
-                    <Icon className="h-4 w-4" style={{ color: headerColor }} />
-                    <span>{cat.label}</span>
-                  </div>
-                  {quests.map((q) => {
-                    const done = !!todays.completed?.[q.id]?.done;
-                    const target = q.currentTargetValue;
-                    const pct = progressPct(q.currentTargetValue, q.sTargetValue);
-                    const rank = rankFromProgressPct(pct);
-                    const cap = xpCapForRank(rank);
-                    const baseXP = baseXPForRank(rank);
-                    const improvement = q.currentTargetValue > q.baselineValue;
-                    const improvementXP = improvement ? Math.round(baseXP * IMPROVEMENT_BONUS_MULT) : 0;
-                    const rawAward = Math.round((baseXP + improvementXP) * priorityMultiplier(q.priority));
-                    const remaining = Math.max(0, cap - (q.xp || 0));
-                    const award = Math.max(0, Math.min(rawAward, remaining));
-                    const isCapped = remaining <= 0;
-
-                    const domainColor = getDomainColor(q.category);
-                    const borderColor = rgba(domainColor, isDark ? 0.35 : 0.18);
-                    const accentColor = rgba(domainColor, isDark ? 0.9 : 0.85);
-                    const titleColor = rgba(domainColor, isDark ? 0.95 : 0.85);
-                    const cardCls = isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white";
-
-                    return (
-                      <button
-                        key={q.id}
-                        onClick={() => toggleQuestDone(q.id)}
-                        className={cx("relative w-full rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]", cardCls)}
-                        style={{ borderColor, "--accent-color": accentColor }}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <div className="h-3 w-3 rounded-full" style={{ backgroundColor: accentColor }} />
-                              <div className="truncate text-sm font-extrabold" style={{ color: titleColor }}>{q.name}</div>
-                              <Pill tone={rank === "S" || rank === "A" ? "good" : rank === "E" ? "warn" : "neutral"} isDark={isDark}>
-                                Rank {rank}
-                              </Pill>
-                              <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Main"}</Pill>
-                            </div>
-                            <div className={cx("mt-1 text-xs", textMuted)}>
-                              Target:{" "}
-                              <span className={cx("font-semibold", textSoft)}>
-                                {target} / {q.sTargetValue} {unitLabel(q.unitType)}
-                              </span>
-                              <span className="mx-2">•</span>
-                              Progress: <span className={cx("font-semibold", textSoft)}>{Math.round(pct * 100)}%</span>
-                            </div>
-                            <div className={cx("mt-1 text-xs", textMuted)}>
-                              XP: <span className={cx("font-semibold", textSoft)}>{q.xp || 0} / {cap}</span>
-                              <span className="mx-2">•</span>
-                              Next clear: <span className={cx("font-semibold", textSoft)}>{award} XP</span>
-                            </div>
-                            {isCapped ? (
-                              <div className={cx("mt-1 text-[11px]", isDark ? "text-amber-300" : "text-amber-700")}>
-                                XP capped - increase your target to rank up.
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="shrink-0">
-                            <Pill tone={done ? "good" : "neutral"} isDark={isDark}>
-                              {done ? "Complete" : "Pending"}
-                            </Pill>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
+              Month
+            </button>
           </div>
-
-          {boss ? (
-            <div className="mt-6">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm font-extrabold">Weekly Boss</div>
-                <Pill tone={bossDone ? "good" : "warn"} isDark={isDark}>
-                  {bossDone ? "Cleared" : "Available"}
-                </Pill>
-              </div>
-
-              <div
-                className={cx(
-                  "w-full rounded-2xl border p-3 text-left transition hover:shadow-sm",
-                  bossDone
-                    ? isDark
-                      ? "border-violet-900/40 bg-violet-900/20"
-                      : "border-violet-300 bg-violet-50"
-                    : isDark
-                    ? "border-zinc-800 bg-zinc-950/10"
-                    : "border-zinc-200 bg-white"
-                )}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-extrabold">{boss.name}</div>
-                    <div className={cx("mt-1 text-xs", textMuted)}>{boss.desc}</div>
-                    <div className={cx("mt-1 text-xs", textMuted)}>
-                      Reward: <span className={cx("font-semibold", textSoft)}>High XP</span>
-                    </div>
-                  </div>
-                  <div className="shrink-0">
-                    <Button onClick={toggleBossDone} variant={bossDone ? "outline" : "default"} isDark={isDark}>
-                      {bossDone ? "Undo" : "Claim"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </Card>
+          <button
+            type="button"
+            onClick={() => setShowHint((v) => !v)}
+            className={cx(
+              "inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm font-bold transition",
+              isDark ? "border-zinc-800 bg-zinc-950/40 hover:bg-zinc-900" : "border-zinc-200 bg-zinc-50 hover:bg-zinc-100"
+            )}
+            aria-label="Calendar info"
+          >
+            i
+          </button>
+        </div>
       </div>
 
-      <div className="space-y-4" />
-    </div>
+      {showHint ? (
+        <div
+          className={cx(
+            "mt-3 rounded-xl border px-3 py-2 text-xs",
+            isDark ? "border-zinc-800 bg-zinc-950/40 text-zinc-200" : "border-zinc-200 bg-zinc-50 text-zinc-700"
+          )}
+          onClick={() => setShowHint(false)}
+        >
+          <div>Tap a day to see clears, misses, and XP.</div>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+            <Pill tone="good" isDark={isDark}>
+              Complete
+            </Pill>
+            <Pill tone="warn" isDark={isDark}>
+              Partial
+            </Pill>
+            <Pill tone="bad" isDark={isDark}>
+              Missed
+            </Pill>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex items-center justify-between">
+        <div className="text-sm font-semibold">{viewMode === "month" ? monthName : "This week"}</div>
+        {viewMode === "month" ? (
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() =>
+                setCalCursor((p) => {
+                  const d = new Date(p.y, p.m, 1);
+                  d.setMonth(d.getMonth() - 1);
+                  return { y: d.getFullYear(), m: d.getMonth() };
+                })
+              }
+              isDark={isDark}
+              aria-label="Previous month"
+              title="Previous month"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setCalCursor((p) => {
+                  const d = new Date(p.y, p.m, 1);
+                  d.setMonth(d.getMonth() + 1);
+                  return { y: d.getFullYear(), m: d.getMonth() };
+                })
+              }
+              isDark={isDark}
+              aria-label="Next month"
+              title="Next month"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className={cx("mt-4 rounded-2xl border p-3", border, isDark ? "bg-zinc-950/10" : "bg-white")}>
+        <div className={cx("grid grid-cols-7 gap-2 text-xs font-semibold", textMuted)}>
+          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+            <div key={d} className="px-1">
+              {d}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-2 grid grid-cols-7 gap-2">
+          {(viewMode === "month" ? weeks.flat().map((w) => w.date) : weekDates).map((date, idx) => {
+            const key = fmtDateKey(date);
+            const tone = dayStatus(date);
+            const isToday = key === dateKey;
+            const inMonth = viewMode === "month" ? date.getMonth() === calCursor.m : true;
+            const isInactive = tone === "inactive";
+            return (
+              <button
+                key={`${key}-${idx}`}
+                onClick={() => {
+                  setSelectedDay(key);
+                  setModalDayKey(key);
+                  setDayModalOpen(true);
+                  setShowHint(false);
+                }}
+                className={cx(
+                  "aspect-square rounded-xl border px-2 py-2 text-left transition hover:shadow-sm active:scale-[0.99]",
+                  inMonth ? border : "border-transparent opacity-50",
+                  toneCls[tone],
+                  isInactive ? "opacity-70" : "",
+                  isToday ? (isDark ? "ring-2 ring-zinc-100" : "ring-2 ring-zinc-900") : ""
+                )}
+              >
+                <div className="text-sm font-black">{date.getDate()}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <Modal
+        open={dayModalOpen}
+        title={`Day Report • ${modalDayKey}`}
+        onClose={() => setDayModalOpen(false)}
+        isDark={isDark}
+        border={border}
+        surface={surface}
+        textMuted={textMuted}
+      >
+        <DayModalContent dayKey={modalDayKey} state={state} setState={setState} settings={settings} isDark={isDark} border={border} textMuted={textMuted} />
+      </Modal>
+    </Card>
+  );
+}
+function TodayQuestsSection({
+  state,
+  todays,
+  settings,
+  boss,
+  bossDone,
+  toggleQuestDone,
+  toggleBossDone,
+  isWithinWindowNow,
+  timerTick,
+  onTimedStart,
+  onTimedPause,
+  onTimedResume,
+  onTimedComplete,
+  isDark,
+  border,
+  surface,
+  textMuted,
+  textSoft,
+}) {
+  const holdRef = useRef({});
+  const [collapsingIds, setCollapsingIds] = useState([]);
+  const [expandedCategories, setExpandedCategories] = useState(() => new Set());
+  const [timedOpenId, setTimedOpenId] = useState("");
+  const doneCount = state.quests.filter((q) => !!todays.completed?.[q.id]?.done).length;
+  const total = state.quests.length;
+  const percent = total ? Math.round((doneCount / total) * 100) : 0;
+
+  const debt = todays.xpDebt || 0;
+  const categories = [
+    { id: "body", label: "Body" },
+    { id: "mind", label: "Mind" },
+    { id: "hobbies", label: "Hobbies" },
+    { id: "productivity", label: "Productivity" },
+  ];
+
+  function orderedQuestsForCategory(catId) {
+    return state.quests
+      .filter((q) => q.category === catId)
+      .sort((a, b) => {
+        const aDone = !!todays.completed?.[a.id]?.done;
+        const bDone = !!todays.completed?.[b.id]?.done;
+        if (aDone !== bDone) return aDone ? 1 : -1;
+        if (a.priority !== b.priority) return a.priority === "main" ? -1 : 1;
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+  }
+
+  function renderQuestCard(q) {
+    const done = !!todays.completed?.[q.id]?.done;
+    const isTimed = questIsTimed(q);
+    const status = q.status || "idle";
+    const isActive = status === "active";
+    const isPaused = status === "paused";
+    const isCollapsing = collapsingIds.includes(q.id);
+    const elapsedMs = isActive && q.startedAt ? Math.max(0, timerTick - q.startedAt) : q.elapsedMs || 0;
+    const limitMs = questTimerLimitMs(q);
+    const remainingMs = limitMs ? Math.max(0, limitMs - elapsedMs) : 0;
+
+    const domainColor = getDomainColor(q.category);
+    const borderColor = rgba(domainColor, isDark ? 0.35 : 0.18);
+    const activeAccent = isDark ? "#ffffff" : "#000000";
+    const accentColor = done ? rgba(domainColor, isDark ? 0.9 : 0.85) : isActive ? activeAccent : rgba(domainColor, isDark ? 0.35 : 0.18);
+    const titleColor = done ? rgba(domainColor, isDark ? 0.95 : 0.85) : isActive ? activeAccent : isDark ? "rgba(255,255,255,0.6)" : "rgba(17,24,39,0.55)";
+    const cardCls = isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white";
+
+    const handlePointerDown = () => {
+      if (!isActive) return;
+      holdRef.current[q.id] = setTimeout(() => {
+        if (navigator.vibrate) navigator.vibrate(30);
+        setCollapsingIds((ids) => [...ids, q.id]);
+        setTimeout(() => {
+          onTimedComplete(q.id);
+          setCollapsingIds((ids) => ids.filter((x) => x !== q.id));
+        }, 260);
+      }, 600);
+    };
+
+    const clearHold = () => {
+      const t = holdRef.current[q.id];
+      if (t) clearTimeout(t);
+      delete holdRef.current[q.id];
+    };
+
+    const handleClick = () => {
+      if (done) return;
+      if (isTimed) {
+        setTimedOpenId((prev) => (prev === q.id ? "" : q.id));
+        return;
+      }
+      toggleQuestDone(q.id);
+    };
+
+    return (
+      <button
+        key={q.id}
+        onClick={handleClick}
+        onPointerDown={handlePointerDown}
+        onPointerUp={clearHold}
+        onPointerLeave={clearHold}
+        className={cx(
+          "relative w-full overflow-hidden rounded-2xl border p-3 text-left transition hover:shadow-sm active:scale-[0.998]",
+          cardCls,
+          isActive ? "shadow-[0_0_0_2px_var(--accent-color)]" : "",
+          isCollapsing ? "max-h-0 overflow-hidden opacity-0" : isTimed && timedOpenId === q.id ? "max-h-[360px]" : "max-h-[160px]"
+        )}
+        style={{
+          borderColor,
+          "--accent-color": accentColor,
+          transition: "all 240ms ease",
+          filter: !done && !isActive ? "grayscale(1)" : "none",
+          opacity: !done && !isActive ? 0.7 : 1,
+        }}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+              <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: accentColor }} />
+              <div
+                className="truncate text-sm font-extrabold"
+                style={{
+                  color: titleColor,
+                  textDecoration: done ? "line-through" : "none",
+                  textDecorationThickness: done ? "3px" : "auto",
+                  textDecorationColor: done ? (isDark ? "rgba(255,255,255,0.6)" : "rgba(15,23,42,0.6)") : "currentColor",
+                }}
+              >
+                {q.name}
+              </div>
+              </div>
+              {isTimed && (isActive || isPaused) ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      (isPaused ? onTimedResume : onTimedPause)(q.id);
+                    }}
+                    isDark={isDark}
+                    className="px-3 py-1 text-xs"
+                  >
+                    {isPaused ? "Resume" : "Pause"}
+                  </Button>
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTimedComplete(q.id);
+                    }}
+                    isDark={isDark}
+                    className="px-3 py-1 text-xs"
+                  >
+                    Complete
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+            {isActive ? (
+              <div className={cx("mt-1 text-xs font-semibold", textSoft)}>
+                {formatElapsed(elapsedMs)} elapsed • {formatElapsed(remainingMs)} left
+              </div>
+            ) : isPaused ? (
+              <div className={cx("mt-1 text-xs font-semibold", textSoft)}>
+                Paused • {formatElapsed(elapsedMs)} elapsed
+              </div>
+            ) : null}
+            {isTimed && timedOpenId === q.id ? (
+              <div className={cx("mt-2 rounded-xl border p-3 text-xs", border, textMuted)}>
+                <div className="font-semibold">Target task goal: {q.targetMinutes} min</div>
+                <div className="mt-1">Grace period: {q.graceMinutes} min</div>
+                <div className="mt-1">If you have breaks, schedule them inside this window.</div>
+                <div className="mt-1">This task must be started.</div>
+                <div className="mt-1">Complete within the allotted time to count.</div>
+                {status === "idle" ? (
+                  <div className="mt-3">
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTimedStart(q.id);
+                      }}
+                      isDark={isDark}
+                      className="w-full"
+                    >
+                      Start Quest
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </button>
+    );
+  }
+
+  return (
+    <Card className="p-4" border={border} surface={surface}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-lg font-extrabold">Today’s Quests</div>
+          <div className={cx("mt-1 text-sm", textMuted)}>
+            {fmtDateKey(today())} • {doneCount}/{total} completed • {todays.earnedXP || 0} XP gained today
+          </div>
+        </div>
+        <Pill tone={percent >= 80 ? "good" : percent >= 40 ? "warn" : "bad"} isDark={isDark}>
+          {percent}%
+        </Pill>
+      </div>
+
+      {debt > 0 && settings.xpDebtEnabled ? (
+        <div
+          className={cx(
+            "mt-3 rounded-xl border p-3 text-sm",
+            isDark ? "border-amber-900/40 bg-amber-900/20 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-900"
+          )}
+        >
+          <div className="font-semibold">XP Debt active</div>
+          <div>{debt} XP must be repaid before rewards apply.</div>
+        </div>
+      ) : null}
+      {settings.blockAfterBedtime && !isWithinWindowNow ? (
+        <div
+          className={cx(
+            "mt-3 rounded-xl border p-3 text-sm",
+            isDark ? "border-red-900/40 bg-red-900/20 text-red-100" : "border-red-200 bg-red-50 text-red-900"
+          )}
+        >
+          <div className="font-semibold">Outside time window</div>
+          <div>Completions will not count until your wake-to-bed window is active.</div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 space-y-4">
+        {categories.map((cat) => {
+          const list = orderedQuestsForCategory(cat.id);
+          if (!list.length) return null;
+          const expanded = expandedCategories.has(cat.id);
+          const visible = expanded ? list : list.slice(0, 2);
+          const Icon = categoryIconForName(cat.label);
+          const headerColor = getDomainColor(cat.id);
+          const completedCount = list.filter((q) => !!todays.completed?.[q.id]?.done).length;
+          return (
+            <div key={cat.id} className={cx("rounded-2xl border p-3", border)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setExpandedCategories((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(cat.id)) next.delete(cat.id);
+                    else next.add(cat.id);
+                    return next;
+                  });
+                }}
+                className="flex w-full items-center justify-between"
+              >
+                <div className={cx("flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em]", textMuted)} style={{ color: headerColor }}>
+                  <Icon className="h-4 w-4" style={{ color: headerColor }} />
+                  <span>{cat.label}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold" style={{ color: headerColor }}>
+                    {completedCount}/{list.length}
+                  </span>
+                  <span className={cx("text-xs font-semibold", textMuted)}>{expanded ? "Show less" : "Show all"}</span>
+                </div>
+              </button>
+              <div className="mt-3 space-y-3">
+                {visible.map((q) => renderQuestCard(q))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+    </Card>
   );
 }
 
@@ -1152,6 +1565,8 @@ function CalendarPanel({
   dateKey,
   state,
   setState,
+  settings,
+  joinDateKey,
   selectedDay,
   setSelectedDay,
   modalDayKey,
@@ -1169,6 +1584,7 @@ function CalendarPanel({
   const nowKey = dateKey;
 
   function dayTone(key) {
+    if (key <= joinDateKey) return "inactive";
     const e = state.days[key];
     if (!e) return "none";
     if (e.xpDebt > 0) return "debt";
@@ -1181,6 +1597,7 @@ function CalendarPanel({
     good: isDark ? "bg-emerald-900/30 text-emerald-100" : "bg-emerald-100 text-emerald-900",
     missed: isDark ? "bg-zinc-800 text-zinc-200" : "bg-zinc-200 text-zinc-800",
     debt: isDark ? "bg-amber-900/30 text-amber-100" : "bg-amber-100 text-amber-900",
+    inactive: isDark ? "bg-zinc-900/40 text-zinc-400" : "bg-zinc-100 text-zinc-500",
     none: "bg-transparent",
   };
 
@@ -1237,6 +1654,7 @@ function CalendarPanel({
             const isToday = key === nowKey;
             const e = state.days[key];
             const xp = e?.earnedXP || 0;
+            const isInactive = tone === "inactive";
 
             return (
               <button
@@ -1250,6 +1668,7 @@ function CalendarPanel({
                   "aspect-square rounded-xl border px-2 py-2 text-left transition hover:shadow-sm active:scale-[0.99]",
                   inMonth ? border : "border-transparent opacity-50",
                   toneCls[tone],
+                  isInactive ? "opacity-70" : "",
                   isToday ? (isDark ? "ring-2 ring-zinc-100" : "ring-2 ring-zinc-900") : ""
                 )}
               >
@@ -1292,23 +1711,43 @@ function CalendarPanel({
         surface={surface}
         textMuted={textMuted}
       >
-        <DayModalContent dayKey={modalDayKey} state={state} setState={setState} isDark={isDark} border={border} textMuted={textMuted} />
+        <DayModalContent dayKey={modalDayKey} state={state} setState={setState} settings={settings} isDark={isDark} border={border} textMuted={textMuted} />
       </Modal>
     </div>
   );
 }
 
-function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, updateQuest, addQuest, deleteQuest }) {
+function QuestsPanel({
+  state,
+  todays,
+  settings,
+  boss,
+  bossDone,
+  toggleQuestDone,
+  toggleBossDone,
+  isWithinWindowNow,
+  timerTick,
+  onTimedStart,
+  onTimedPause,
+  onTimedResume,
+  onTimedComplete,
+  textMuted,
+  textSoft,
+  isDark,
+  border,
+  surface,
+  updateQuest,
+  addQuest,
+  deleteQuest,
+}) {
+  const [editorOpen, setEditorOpen] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [expandedById, setExpandedById] = useState({});
   const filterOptions = ["all", ...QUEST_CATEGORIES];
 
-  const filteredQuests = (categoryFilter === "all" ? state.quests : state.quests.filter((q) => q.category === categoryFilter))
+  const editorList = (categoryFilter === "all" ? state.quests : state.quests.filter((q) => q.category === categoryFilter))
     .slice()
-    .sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority === "main" ? -1 : 1;
-      return (b.createdAt || 0) - (a.createdAt || 0);
-    });
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   function toggleExpanded(id) {
     setExpandedById((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -1316,7 +1755,7 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
 
   function expandAll() {
     const next = {};
-    filteredQuests.forEach((q) => {
+    editorList.forEach((q) => {
       next[q.id] = true;
     });
     setExpandedById(next);
@@ -1324,233 +1763,285 @@ function QuestsPanel({ state, textMuted, textSoft, isDark, border, surface, upda
 
   function collapseAll() {
     const next = {};
-    filteredQuests.forEach((q) => {
+    editorList.forEach((q) => {
       next[q.id] = false;
     });
     setExpandedById(next);
   }
 
-  function ensureExpanded(id) {
-    setExpandedById((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
-  }
-
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="p-4 lg:col-span-2" border={border} surface={surface}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-lg font-extrabold">Quest Editor</div>
-            <div className={cx("mt-1 text-sm", textMuted)}>Define targets, S-rank benchmarks, and priority for XP.</div>
+      <div className="space-y-4 lg:col-span-2">
+        <TodayQuestsSection
+          state={state}
+          todays={todays}
+          settings={settings}
+          boss={boss}
+          bossDone={bossDone}
+          toggleQuestDone={toggleQuestDone}
+          toggleBossDone={toggleBossDone}
+          isWithinWindowNow={isWithinWindowNow}
+          timerTick={timerTick}
+          onTimedStart={onTimedStart}
+          onTimedPause={onTimedPause}
+          onTimedResume={onTimedResume}
+          onTimedComplete={onTimedComplete}
+          isDark={isDark}
+          border={border}
+          surface={surface}
+          textMuted={textMuted}
+          textSoft={textSoft}
+        />
+
+        <div className={cx("rounded-2xl border p-3", border, surface)}>
+          <Button onClick={() => setEditorOpen(true)} isDark={isDark} className="w-full">
+            Open Quest Editor
+          </Button>
+        </div>
+      </div>
+
+      <Modal
+        open={editorOpen}
+        title="Quest Editor"
+        onClose={() => setEditorOpen(false)}
+        isDark={isDark}
+        border={border}
+        surface={surface}
+        textMuted={textMuted}
+      >
+        <div className="flex h-[70vh] flex-col gap-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className={cx("text-xs", textMuted)}>Edit quests, targets, and priority.</div>
+            <Button onClick={addQuest} isDark={isDark}>
+              Add Quest
+            </Button>
           </div>
-          <Button onClick={addQuest} isDark={isDark}>
-            Add Quest
-          </Button>
-        </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          {filterOptions.map((opt) => {
-            const active = categoryFilter === opt;
-            const domainColor = opt === "all" ? null : DOMAIN_COLORS[opt];
-            const activeStyle =
-              active && domainColor
-                ? {
-                    borderColor: domainColor,
-                    color: domainColor,
-                    boxShadow: `0 0 0 1px ${rgba(domainColor, 0.25)}`,
-                  }
-                : undefined;
-            return (
-              <Button
-                key={opt}
-                variant={active ? "default" : "outline"}
-                onClick={() => setCategoryFilter(opt)}
-                isDark={isDark}
-                className="transition-colors duration-150"
-                style={activeStyle}
-              >
-                {opt === "all" ? "All" : categoryLabel(opt)}
-              </Button>
-            );
-          })}
-        </div>
+          <div className="flex flex-wrap gap-2">
+            {filterOptions.map((opt) => {
+              const active = categoryFilter === opt;
+              const domainColor = opt === "all" ? null : DOMAIN_COLORS[opt];
+              const activeStyle =
+                active && domainColor
+                  ? {
+                      borderColor: domainColor,
+                      color: domainColor,
+                      boxShadow: `0 0 0 1px ${rgba(domainColor, 0.25)}`,
+                    }
+                  : undefined;
+              return (
+                <Button
+                  key={opt}
+                  variant={active ? "default" : "outline"}
+                  onClick={() => setCategoryFilter(opt)}
+                  isDark={isDark}
+                  className="transition-colors duration-150"
+                  style={activeStyle}
+                >
+                  {opt === "all" ? "All" : categoryLabel(opt)}
+                </Button>
+              );
+            })}
+          </div>
 
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={expandAll} isDark={isDark}>
-            Expand all
-          </Button>
-          <Button variant="outline" onClick={collapseAll} isDark={isDark}>
-            Collapse all
-          </Button>
-        </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                const allExpanded = editorList.length > 0 && editorList.every((q) => expandedById[q.id]);
+                if (allExpanded) collapseAll();
+                else expandAll();
+              }}
+              isDark={isDark}
+            >
+              {editorList.length > 0 && editorList.every((q) => expandedById[q.id]) ? "Collapse all" : "Expand all"}
+            </Button>
+          </div>
 
-        <div className="mt-4 space-y-3">
-          {filteredQuests.map((q) => {
-            const target = q.currentTargetValue;
-            const allowedKinds = allowedKindsForCategory(q.category);
-            const isExpanded = !!expandedById[q.id];
-            const domainStyle = getDomainStyle(q.category, isDark);
-            return (
-              <div
-                key={q.id}
-                className={cx("rounded-2xl border p-3", border)}
-                style={{ borderColor: domainStyle.borderColor }}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className="text-xs font-semibold uppercase tracking-[0.12em]"
-                        style={{ color: domainStyle.color }}
-                      >
-                        {categoryLabel(q.category)}
-                      </span>
-                      <div
-                        className="text-sm font-extrabold"
-                        style={{ color: rgba(domainStyle.color, isDark ? 0.85 : 0.7) }}
-                      >
-                        {q.name}
-                      </div>
-                    </div>
-                    <div className={cx("mt-1 text-xs", textMuted)}>
-                      Current target: <span className={cx("font-bold", textSoft)}>{target} {unitLabel(q.unitType)}</span>
-                    </div>
-                    {isExpanded ? (
-                      <div className={cx("mt-1 inline-flex items-center gap-2 text-xs", textMuted)}>
-                        {(() => {
-                          const Icon = categoryIconForName(q.category);
-                          return <Icon className="h-4 w-4" style={{ color: domainStyle.color }} />;
-                        })()}
-                        <span className="font-semibold" style={{ color: domainStyle.color }}>
+          <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+            {editorList.map((q) => {
+              const allowedKinds = allowedKindsForCategory(q.category);
+              const isExpanded = !!expandedById[q.id];
+              const domainStyle = getDomainStyle(q.category, isDark);
+              return (
+                <div
+                  key={q.id}
+                  className={cx("rounded-2xl border p-3", border)}
+                  style={{ borderColor: domainStyle.borderColor }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className="text-xs font-semibold uppercase tracking-[0.12em]"
+                          style={{ color: domainStyle.color }}
+                        >
                           {categoryLabel(q.category)}
                         </span>
-                        <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Major"}</Pill>
+                        <div
+                          className="text-sm font-extrabold"
+                          style={{ color: rgba(domainStyle.color, isDark ? 0.85 : 0.7) }}
+                        >
+                          {q.name}
+                        </div>
                       </div>
-                    ) : null}
+                      <div className={cx("mt-1 text-xs", textMuted)}>
+                        Current target: <span className={cx("font-bold", textSoft)}>{q.currentTargetValue} {unitLabel(q.unitType)}</span>
+                      </div>
+                      {isExpanded ? (
+                        <div className={cx("mt-1 inline-flex items-center gap-2 text-xs", textMuted)}>
+                          {(() => {
+                            const Icon = categoryIconForName(q.category);
+                            return <Icon className="h-4 w-4" style={{ color: domainStyle.color }} />;
+                          })()}
+                          <span className="font-semibold" style={{ color: domainStyle.color }}>
+                            {categoryLabel(q.category)}
+                          </span>
+                          <Pill isDark={isDark}>{q.priority === "minor" ? "Minor" : "Major"}</Pill>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" onClick={() => toggleExpanded(q.id)} isDark={isDark}>
+                        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
+                      <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
+                        Delete
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => toggleExpanded(q.id)} isDark={isDark}>
-                      {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                    </Button>
-                    <Button variant="danger" onClick={() => deleteQuest(q.id)} isDark={isDark}>
-                      Delete
-                    </Button>
-                  </div>
+
+                  {isExpanded ? (
+                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Domain</div>
+                        <select
+                          value={q.category}
+                          onChange={(e) => updateQuest(q.id, { category: normalizeQuestCategory(e.target.value) })}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        >
+                          {QUEST_CATEGORIES.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {categoryLabel(cat)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Quest name</div>
+                        <input
+                          value={q.name}
+                          onChange={(e) => updateQuest(q.id, { name: e.target.value })}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
+                        <select
+                          value={q.unitType}
+                          onChange={(e) => updateQuest(q.id, { unitType: normalizeUnitType(e.target.value) })}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        >
+                          {allowedKinds.map((kind) => (
+                            <option key={kind} value={kind}>
+                              {unitLabel(kind)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Priority</div>
+                        <select
+                          value={q.priority}
+                          onChange={(e) => updateQuest(q.id, { priority: e.target.value })}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        >
+                        <option value="main">Major</option>
+                          <option value="minor">Minor</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Current Target</div>
+                        <input
+                          type="number"
+                          step={q.unitType === "distance" ? "0.1" : "1"}
+                          value={q.currentTargetValue}
+                          onChange={(e) => updateQuest(q.id, { currentTargetValue: Number(e.target.value) })}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
+                        <input
+                          type="number"
+                          step={q.unitType === "distance" ? "0.1" : "1"}
+                          value={q.sTargetValue}
+                          onChange={(e) => updateQuest(q.id, { sTargetValue: Number(e.target.value) })}
+                          className={cx(
+                            "mt-1 w-full rounded-xl border p-2 text-sm",
+                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                          )}
+                        />
+                      </div>
+
+                      {q.unitType === "minutes" ? (
+                        <>
+                          <div>
+                            <div className={cx("text-xs font-semibold", textMuted)}>Target Minutes</div>
+                            <input
+                              type="number"
+                              min="1"
+                              value={q.targetMinutes ?? q.currentTargetValue}
+                              onChange={(e) => updateQuest(q.id, { targetMinutes: Number(e.target.value) })}
+                              className={cx(
+                                "mt-1 w-full rounded-xl border p-2 text-sm",
+                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                              )}
+                            />
+                          </div>
+                          <div>
+                            <div className={cx("text-xs font-semibold", textMuted)}>Grace Minutes</div>
+                            <input
+                              type="number"
+                              min="0"
+                              value={q.graceMinutes ?? 10}
+                              onChange={(e) => updateQuest(q.id, { graceMinutes: Number(e.target.value) })}
+                              className={cx(
+                                "mt-1 w-full rounded-xl border p-2 text-sm",
+                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                              )}
+                            />
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
-
-                {isExpanded ? (
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div>
-                      <div className={cx("text-xs font-semibold", textMuted)}>Domain</div>
-                      <select
-                        value={q.category}
-                        onChange={(e) => {
-                          const nextCategory = normalizeQuestCategory(e.target.value);
-                          const nextAllowed = allowedKindsForCategory(nextCategory);
-                          const nextUnitType = nextAllowed.includes(q.unitType) ? q.unitType : nextAllowed[0];
-                          updateQuest(q.id, { category: nextCategory, unitType: nextUnitType });
-                        }}
-                        onFocus={() => ensureExpanded(q.id)}
-                        className={cx(
-                          "mt-1 w-full rounded-xl border p-2 text-sm",
-                          isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                        )}
-                      >
-                        {QUEST_CATEGORIES.map((cat) => (
-                          <option key={cat} value={cat}>
-                            {categoryLabel(cat)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <div className={cx("text-xs font-semibold", textMuted)}>Quest name</div>
-                      <input
-                        value={q.name}
-                        onChange={(e) => updateQuest(q.id, { name: e.target.value })}
-                        onFocus={() => ensureExpanded(q.id)}
-                        className={cx(
-                          "mt-1 w-full rounded-xl border p-2 text-sm font-semibold outline-none focus:ring-2",
-                          isDark ? "border-zinc-800 bg-zinc-950/10 focus:ring-zinc-100" : "border-zinc-200 bg-white focus:ring-zinc-900"
-                        )}
-                      />
-                    </div>
-
-                    <div>
-                      <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
-                      <select
-                        value={q.unitType}
-                        onChange={(e) => updateQuest(q.id, { unitType: normalizeUnitType(e.target.value) })}
-                        onFocus={() => ensureExpanded(q.id)}
-                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                      >
-                        {allowedKinds.includes("reps") ? <option value="reps">Reps</option> : null}
-                        {allowedKinds.includes("distance") ? <option value="distance">Distance (km)</option> : null}
-                        {allowedKinds.includes("minutes") ? <option value="minutes">Minutes</option> : null}
-                      </select>
-                    </div>
-
-                    <div>
-                      <div className={cx("text-xs font-semibold", textMuted)}>Priority</div>
-                      <select
-                        value={q.priority}
-                        onChange={(e) => updateQuest(q.id, { priority: e.target.value })}
-                        onFocus={() => ensureExpanded(q.id)}
-                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                      >
-                        <option value="main">Main</option>
-                        <option value="minor">Minor</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <div className={cx("text-xs font-semibold", textMuted)}>Current Target</div>
-                      <input
-                        type="number"
-                        step={q.unitType === "distance" ? "0.1" : "1"}
-                        value={q.currentTargetValue}
-                        onChange={(e) => updateQuest(q.id, { currentTargetValue: Number(e.target.value) })}
-                        onFocus={() => ensureExpanded(q.id)}
-                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                      />
-                    </div>
-
-                    <div>
-                      <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
-                      <input
-                        type="number"
-                        step={q.unitType === "distance" ? "0.1" : "1"}
-                        value={q.sTargetValue}
-                        onChange={(e) => updateQuest(q.id, { sTargetValue: Number(e.target.value) })}
-                        onFocus={() => ensureExpanded(q.id)}
-                        className={cx("mt-1 w-full rounded-xl border p-2 text-sm", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}
-                      />
-                    </div>
-
-                    <div className={cx("rounded-xl border p-3 text-xs", border)}>
-                      <div className={cx("text-[11px] font-semibold", textMuted)}>Baseline</div>
-                      <div className="mt-1 text-sm font-black">{q.baselineValue} {unitLabel(q.unitType)}</div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Card className="p-4" border={border} surface={surface}>
-        <div className="text-sm font-extrabold">How progression works</div>
-        <div className={cx("mt-2 text-sm", textMuted)}>Rank is based on how close your current target is to your S target.</div>
-        <div className={cx("mt-4 rounded-xl border p-3 text-xs", border, textSoft)}>
-          Example: 20 pushups current, 100 pushups S target
-          <div className="mt-2">
-            Progress: 20% (Rank D)
-            <br />
-            Increase current target to move up ranks
+              );
+            })}
           </div>
         </div>
-      </Card>
+      </Modal>
     </div>
   );
 }
@@ -1931,11 +2422,11 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, requestRe
           </div>
 
           <div className={cx("rounded-2xl border p-4", border)}>
-            <div className="text-sm font-extrabold">Day Timer</div>
+            <div className="text-sm font-extrabold">Day</div>
             <div className={cx("mt-1 text-xs", textMuted)}>
               Configure your wake + bed times. Tasks must be completed inside this window to count.
             </div>
-
+ 
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
                 <div className={cx("text-xs font-semibold", textMuted)}>Wake time</div>
@@ -2013,7 +2504,7 @@ function SettingsPanel({ settings, isDark, border, surface, textMuted, requestRe
 // App
 // -----------------------------
 export default function LevelUpQuestBoard() {
-  const [tab, setTab] = useState("today");
+  const [tab, setTab] = useState("home");
   const [state, setState] = useState(() => {
     const key = fmtDateKey(today());
     const saved = safeJsonParse(localStorage.getItem(STORAGE_KEY) || "", null);
@@ -2099,7 +2590,16 @@ export default function LevelUpQuestBoard() {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem("playerPhoto") || "";
   });
+  const [joinDateKey] = useState(() => {
+    if (typeof window === "undefined") return fmtDateKey(today());
+    const stored = window.localStorage.getItem("joinDate");
+    if (stored) return stored;
+    const todayKey = fmtDateKey(today());
+    window.localStorage.setItem("joinDate", todayKey);
+    return todayKey;
+  });
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [timerTick, setTimerTick] = useState(() => Date.now());
   const [toastMessage, setToastMessage] = useState("");
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
@@ -2131,6 +2631,11 @@ export default function LevelUpQuestBoard() {
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setTimerTick(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -2275,11 +2780,12 @@ export default function LevelUpQuestBoard() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("onboardingComplete", "false");
       window.localStorage.removeItem("playerPhoto");
+      window.localStorage.removeItem("joinDate");
       window.location.reload();
       return;
     }
     setState(buildDefaultState());
-    setTab("today");
+    setTab("home");
   }
 
   function requestReset() {
@@ -2330,7 +2836,22 @@ export default function LevelUpQuestBoard() {
         if (quest.id !== questId) return quest;
         const nextXP = Math.max(0, (quest.xp || 0) + credited);
         const nextBaseline = !was && quest.currentTargetValue > quest.baselineValue ? quest.currentTargetValue : quest.baselineValue;
-        return { ...quest, xp: nextXP, baselineValue: nextBaseline };
+        const isTimed = questIsTimed(quest);
+        if (!isTimed) return { ...quest, xp: nextXP, baselineValue: nextBaseline };
+        const nextStatus = !was ? "completed" : "idle";
+        const elapsedMs = !was
+          ? quest.startedAt
+            ? Math.max(0, Date.now() - quest.startedAt)
+            : quest.elapsedMs || 0
+          : 0;
+        return {
+          ...quest,
+          xp: nextXP,
+          baselineValue: nextBaseline,
+          status: nextStatus,
+          elapsedMs,
+          startedAt: nextStatus === "completed" ? quest.startedAt : null,
+        };
       });
 
       return {
@@ -2340,6 +2861,57 @@ export default function LevelUpQuestBoard() {
         days: { ...prev.days, [key]: newDay },
       };
     });
+  }
+
+  function startTimedQuest(questId) {
+    setState((prev) => ({
+      ...prev,
+      quests: prev.quests.map((q) => {
+        if (q.id !== questId) return q;
+        if (!questIsTimed(q)) return q;
+        return { ...q, status: "active", startedAt: Date.now(), elapsedMs: 0 };
+      }),
+    }));
+  }
+
+  function pauseTimedQuest(questId) {
+    setState((prev) => ({
+      ...prev,
+      quests: prev.quests.map((q) => {
+        if (q.id !== questId) return q;
+        if (!questIsTimed(q) || q.status !== "active") return q;
+        const elapsedMs = q.startedAt ? Math.max(0, Date.now() - q.startedAt) : q.elapsedMs || 0;
+        return { ...q, status: "paused", elapsedMs, startedAt: null };
+      }),
+    }));
+  }
+
+  function resumeTimedQuest(questId) {
+    setState((prev) => ({
+      ...prev,
+      quests: prev.quests.map((q) => {
+        if (q.id !== questId) return q;
+        if (!questIsTimed(q) || q.status !== "paused") return q;
+        const elapsedMs = q.elapsedMs || 0;
+        return { ...q, status: "active", startedAt: Date.now() - elapsedMs };
+      }),
+    }));
+  }
+
+  function completeTimedQuest(questId) {
+    const quest = state.quests.find((q) => q.id === questId);
+    if (!quest || !questIsTimed(quest)) return;
+    if (settings.blockAfterBedtime && !isWithinDayWindow(settings, new Date())) {
+      setToastMessage("Outside your day window — completion won’t count.");
+      return;
+    }
+    const elapsed = quest.startedAt ? Date.now() - quest.startedAt : quest.elapsedMs || 0;
+    const limit = questTimerLimitMs(quest);
+    if (limit && elapsed > limit) {
+      setToastMessage("Timer ended — quest not accepted.");
+      return;
+    }
+    toggleQuestDone(questId);
   }
 
   function toggleBossDone() {
@@ -2427,6 +2999,11 @@ export default function LevelUpQuestBoard() {
           priority: "main",
           xp: 0,
           createdAt,
+          status: "idle",
+          startedAt: null,
+          elapsedMs: 0,
+          targetMinutes: null,
+          graceMinutes: 10,
         },
         ...prev.quests,
       ],
@@ -2528,13 +3105,11 @@ export default function LevelUpQuestBoard() {
   // -----------------------------
   return (
     <Shell page={page}>
-      <Header
-      />
+      <Header />
 
-      {tab === "today" ? (
-        <TodayPanel
-          state={state}
-          todays={todays}
+      {tab === "home" ? (
+        <HomePanel
+          dateKey={dateKey}
           settings={settings}
           playerName={playerName}
           playerAge={playerAge}
@@ -2543,30 +3118,17 @@ export default function LevelUpQuestBoard() {
           onOpenSettings={() => setTab("settings")}
           overallRank={overallRank}
           totalXP={state.totalXP}
-          boss={boss}
-          bossDone={bossDone}
-          toggleQuestDone={attemptToggleQuestDone}
-          toggleBossDone={attemptToggleBossDone}
-          isWithinWindowNow={isWithinWindowNow}
-          isDark={isDark}
-          border={border}
-          surface={surface}
-          textMuted={textMuted}
-          textSoft={textSoft}
-        />
-      ) : null}
-      {tab === "calendar" ? (
-        <CalendarPanel
-          dateKey={dateKey}
           state={state}
           setState={setState}
+          joinDateKey={joinDateKey}
+          calCursor={calCursor}
+          setCalCursor={setCalCursor}
           selectedDay={selectedDay}
           setSelectedDay={setSelectedDay}
-          modalDayKey={modalDayKey}
-          setModalDayKey={setModalDayKey}
           dayModalOpen={dayModalOpen}
           setDayModalOpen={setDayModalOpen}
-          setCalCursor={setCalCursor}
+          modalDayKey={modalDayKey}
+          setModalDayKey={setModalDayKey}
           weeks={weeks}
           monthName={monthName}
           isDark={isDark}
@@ -2578,6 +3140,18 @@ export default function LevelUpQuestBoard() {
       {tab === "quests" ? (
         <QuestsPanel
           state={state}
+          todays={todays}
+          settings={settings}
+          boss={boss}
+          bossDone={bossDone}
+          toggleQuestDone={attemptToggleQuestDone}
+          toggleBossDone={attemptToggleBossDone}
+          isWithinWindowNow={isWithinWindowNow}
+          timerTick={timerTick}
+          onTimedStart={startTimedQuest}
+          onTimedPause={pauseTimedQuest}
+          onTimedResume={resumeTimedQuest}
+          onTimedComplete={completeTimedQuest}
           textMuted={textMuted}
           textSoft={textSoft}
           isDark={isDark}
@@ -2649,10 +3223,6 @@ export default function LevelUpQuestBoard() {
           </div>
         </div>
       </Modal>
-
-      <div className={cx("mt-8 text-center text-xs", isDark ? "text-zinc-500" : "text-zinc-500")}>
-        Offline-first MVP • LocalStorage • Solo Leveling vibe
-      </div>
 
       <Toast message={toastMessage} isDark={isDark} />
 

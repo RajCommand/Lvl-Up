@@ -105,6 +105,21 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
     if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
     setShowAnalog(dx < 0);
   };
+  const onTouchStart = (e) => {
+    const t = e.touches[0];
+    if (!t) return;
+    swipeStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchEnd = (e) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    const t = e.changedTouches[0];
+    if (!start || !t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+    setShowAnalog(dx < 0);
+  };
 
   const Wrapper = Card
     ? Card
@@ -116,47 +131,44 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
     <Wrapper className="p-4" border={border} surface={surface}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-extrabold">Day Timer</div>
-          <div className={cx("mt-1 text-xs", textMuted)}>Swipe to switch views</div>
+          <div className="text-lg font-extrabold">Daily Time Window</div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowAnalog(false)}
-            className={cx(
-              "h-2.5 w-8 rounded-full transition",
-              showAnalog
-                ? isDark
-                  ? "bg-zinc-800"
-                  : "bg-zinc-200"
-                : isDark
-                ? "bg-zinc-100"
-                : "bg-zinc-900"
-            )}
-            aria-label="Show time left view"
-          />
-          <button
-            type="button"
-            onClick={() => setShowAnalog(true)}
-            className={cx(
-              "h-2.5 w-8 rounded-full transition",
-              showAnalog
-                ? isDark
-                  ? "bg-zinc-100"
-                  : "bg-zinc-900"
-                : isDark
-                ? "bg-zinc-800"
-                : "bg-zinc-200"
-            )}
-            aria-label="Show timer face view"
-          />
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowLegend((v) => !v)}
+          className={cx(
+            "inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm font-bold transition",
+            isDark ? "border-zinc-800 bg-zinc-950/40 hover:bg-zinc-900" : "border-zinc-200 bg-zinc-50 hover:bg-zinc-100"
+          )}
+          aria-label="Day timer info"
+        >
+          i
+        </button>
       </div>
+
+      {showLegend ? (
+        <div
+          className={cx(
+            "mt-3 rounded-xl border px-3 py-2 text-xs",
+            isDark ? "border-zinc-800 bg-zinc-950/40 text-zinc-200" : "border-zinc-200 bg-zinc-50 text-zinc-700"
+          )}
+          onClick={() => setShowLegend(false)}
+        >
+          <div className="font-semibold">How the timer works</div>
+          <div className="mt-1">Timer starts at your wake time and ends at bedtime.</div>
+          <div className="mt-1">Tasks completed after the timer ends will not be accepted (sleep time).</div>
+        </div>
+      ) : null}
 
       <div className="mt-4 grid grid-cols-1 gap-4">
         <div
           onPointerDown={onPointerDown}
           onPointerUp={onPointerUp}
+          onPointerLeave={() => {
+            swipeStartRef.current = null;
+          }}
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
           className={cx(
             "relative flex items-center justify-center rounded-2xl border p-4",
             border,
@@ -167,72 +179,6 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
           aria-label="Toggle day timer view"
           title="Double-click to toggle"
         >
-          {!showAnalog ? (
-            <>
-              <button
-                type="button"
-                onClick={() => setShowLegend((v) => !v)}
-                className={cx(
-                  "absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold",
-                  isDark ? "border-zinc-700 bg-zinc-900 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
-                )}
-                aria-label="Explain time left view"
-                title="Explain timer"
-              >
-                i
-              </button>
-              {showLegend ? (
-                <div
-                  className={cx(
-                    "absolute right-3 top-12 z-10 w-52 rounded-xl border p-2 text-[11px]",
-                    isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
-                  )}
-                >
-                  <div className="font-semibold">How the timer works</div>
-                  <div className="mt-1 text-[11px]">
-                    Timer starts at your wake time and ends at bedtime.
-                  </div>
-                  <div className="mt-1 text-[11px]">
-                    Tasks completed after the timer ends will not be accepted (sleep time).
-                  </div>
-                </div>
-              ) : null}
-            </>
-          ) : null}
-          {showAnalog ? (
-            <>
-              <button
-                type="button"
-                onClick={() => setShowLegend((v) => !v)}
-                className={cx(
-                  "absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold",
-                  isDark ? "border-zinc-700 bg-zinc-900 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
-                )}
-                aria-label="Explain day timer colors"
-                title="Explain colors"
-              >
-                i
-              </button>
-              {showLegend ? (
-                <div
-                  className={cx(
-                    "absolute right-3 top-12 z-10 w-48 rounded-xl border p-2 text-[11px]",
-                    isDark ? "border-zinc-700 bg-zinc-950 text-zinc-100" : "border-zinc-200 bg-white text-zinc-900"
-                  )}
-                >
-                  <div className="font-semibold">What the colors mean</div>
-                  <div className="mt-1 text-[11px]">
-                    <div><span className="font-semibold">Green</span>: time left in your day window.</div>
-                    <div><span className="font-semibold">Red</span>: time elapsed in your day window.</div>
-                    <div><span className="font-semibold">Gray</span>: hours outside your day window.</div>
-                  </div>
-                  <div className={cx("mt-2 text-[10px]", textMuted)}>
-                    This is a 24h split, not a clock face.
-                  </div>
-                </div>
-              ) : null}
-            </>
-          ) : null}
           {!showAnalog ? (
             <div className="text-center">
               <div className={cx("text-xs font-semibold", textMuted)}>Time left</div>
@@ -302,6 +248,38 @@ export function DayTimerClock({ wakeTime, bedTime, isDark, border, surface, text
               />
             </div>
           )}
+        </div>
+        <div className="flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAnalog(false)}
+            className={cx(
+              "h-2.5 w-12 rounded-full transition",
+              showAnalog
+                ? isDark
+                  ? "bg-zinc-800"
+                  : "bg-zinc-200"
+                : isDark
+                ? "bg-zinc-100"
+                : "bg-zinc-900"
+            )}
+            aria-label="Show time left view"
+          />
+          <button
+            type="button"
+            onClick={() => setShowAnalog(true)}
+            className={cx(
+              "h-2.5 w-12 rounded-full transition",
+              showAnalog
+                ? isDark
+                  ? "bg-zinc-100"
+                  : "bg-zinc-900"
+                : isDark
+                ? "bg-zinc-800"
+                : "bg-zinc-200"
+            )}
+            aria-label="Show timer face view"
+          />
         </div>
       </div>
     </Wrapper>
