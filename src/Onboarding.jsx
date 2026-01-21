@@ -1,9 +1,13 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { CATEGORY_OPTIONS, TASK_TEMPLATES } from "./onboarding/taskTemplates.js";
 import mindPic from "./assets/onboardingpics/mind1pic.jpeg";
 import hobbiesPic from "./assets/onboardingpics/hobbies1pic.jpeg";
 import bodyPic from "./assets/onboardingpics/body1pic.jpeg";
 import lifePic from "./assets/onboardingpics/Productivity1pic.jpeg";
+import bodyTaskPic from "./assets/onboardingpics/feature _preview/BodyTask.jpg";
+import dailyQuotePic from "./assets/onboardingpics/feature _preview/DailyQuote.jpg";
+import dayTimePic from "./assets/onboardingpics/feature _preview/DayTimeWindow.jpg";
 
 function cx(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -64,6 +68,8 @@ const PRESET_VALUES = {
   defaultReps: { beginner: [5, 50], standard: [10, 100], hardcore: [20, 150] },
   defaultDistance: { beginner: [1, 5], standard: [2, 10], hardcore: [5, 15] },
 };
+
+const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const TERMS_TITLE = "Set Your Terms.";
 
@@ -368,6 +374,8 @@ export default function Onboarding({ onComplete }) {
       const sRaw = Number(cfg.sTargetValue ?? t.s ?? currentRaw);
       const currentTargetValue = Math.max(1, Number.isFinite(currentRaw) ? currentRaw : 1);
       const sTargetValue = Math.max(currentTargetValue, Number.isFinite(sRaw) ? sRaw : currentTargetValue);
+      const frequency = cfg.frequency === "weekly" ? "weekly" : "daily";
+      const daysOfWeek = Array.isArray(cfg.daysOfWeek) && cfg.daysOfWeek.length ? cfg.daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
       return {
         id: `q_${t.id}_${createdAt + idx}`,
         name: t.name,
@@ -378,6 +386,8 @@ export default function Onboarding({ onComplete }) {
         baselineValue: currentTargetValue,
         priority: "main",
         xp: 0,
+        frequency,
+        daysOfWeek,
         createdAt: createdAt + idx,
       };
     });
@@ -422,10 +432,51 @@ export default function Onboarding({ onComplete }) {
           0% { opacity: 0; transform: translateY(10px) scale(0.98); }
           100% { opacity: 1; transform: translateY(0) scale(1); }
         }
+        @keyframes featureIn {
+          0% { opacity: 0; transform: translateY(12px) scale(0.98); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes logoIntro {
+          0% { opacity: 0; transform: scale(0.96); }
+          30% { opacity: 1; transform: scale(1); }
+          65% { opacity: 1; transform: scale(1); }
+          100% { opacity: 0; transform: scale(1); }
+        }
+        @keyframes logoReveal {
+          0% { opacity: 0; transform: scale(0.98); }
+          65% { opacity: 0; transform: scale(0.98); }
+          100% { opacity: 1; transform: scale(1); }
+        }
         .animate-step-in { animation: stepIn 320ms ease both; }
         .animate-logo { animation: softFade 1.5s ease both; }
         .animate-subtitle { animation: softFade 1s ease 1.5s both; }
         .animate-cta { animation: ctaIn 1.2s ease 2.6s both; }
+        .feature-card { animation: featureIn 520ms ease both; }
+        .feature-delay-1 { animation-delay: 2.7s; }
+        .feature-delay-2 { animation-delay: 3s; }
+        .feature-delay-3 { animation-delay: 3.3s; }
+        .logo-anim { display: inline-grid; place-items: center; }
+        .logo-base,
+        .logo-final {
+          grid-area: 1 / 1;
+          white-space: nowrap;
+        }
+        .logo-base { animation: logoIntro 1.8s ease both; }
+        .logo-final {
+          animation: logoReveal 1.8s ease both;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .logo-base,
+          .logo-final,
+          .animate-step-in,
+          .animate-logo,
+          .animate-subtitle,
+          .animate-cta,
+          .feature-card {
+            animation: none !important;
+          }
+          .logo-final { position: static; transform: none; }
+        }
       `}</style>
 
       <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-5 pb-28">
@@ -444,10 +495,54 @@ export default function Onboarding({ onComplete }) {
                     )}
                     style={{ textShadow: isDark ? "0 0 22px rgba(255,255,255,0.12)" : "0 0 18px rgba(0,0,0,0.08)" }}
                   >
-                    <span className="animate-logo">Level Up.</span>
+                    <span className="logo-anim">
+                      <span className="logo-base">Lvl.</span>
+                      <span className="logo-final" aria-hidden="true">Level Up.</span>
+                    </span>
                   </div>
                   <div className={cx("mt-3 text-sm", isDark ? "text-zinc-300" : "text-zinc-600")}> 
                     <span className="animate-subtitle">Turn habits into quests. Progress by leveling up.</span>
+                  </div>
+                  <div className="mt-8 flex flex-col items-center gap-4">
+                    <div
+                      className={cx(
+                        "feature-card feature-delay-1 w-full max-w-sm overflow-hidden rounded-2xl border shadow-lg",
+                        isDark ? "border-zinc-800/70 bg-zinc-950/20" : "border-zinc-200 bg-white"
+                      )}
+                      style={{ boxShadow: isDark ? "0 16px 40px rgba(0,0,0,0.35)" : "0 18px 45px rgba(0,0,0,0.12)" }}
+                    >
+                      <img
+                        src={bodyTaskPic}
+                        alt="Body task preview"
+                        className="block w-full object-cover scale-[1.02] origin-center"
+                      />
+                    </div>
+                    <div
+                      className={cx(
+                        "feature-card feature-delay-2 w-full max-w-sm overflow-hidden rounded-2xl border shadow-lg",
+                        isDark ? "border-zinc-800/70 bg-zinc-950/20" : "border-zinc-200 bg-white"
+                      )}
+                      style={{ boxShadow: isDark ? "0 16px 40px rgba(0,0,0,0.35)" : "0 18px 45px rgba(0,0,0,0.12)" }}
+                    >
+                      <img
+                        src={dailyQuotePic}
+                        alt="Daily quotes preview"
+                        className="block w-full object-cover scale-[1.02] origin-center"
+                      />
+                    </div>
+                    <div
+                      className={cx(
+                        "feature-card feature-delay-3 w-full max-w-sm overflow-hidden rounded-2xl border shadow-lg",
+                        isDark ? "border-zinc-800/70 bg-zinc-950/20" : "border-zinc-200 bg-white"
+                      )}
+                      style={{ boxShadow: isDark ? "0 16px 40px rgba(0,0,0,0.35)" : "0 18px 45px rgba(0,0,0,0.12)" }}
+                    >
+                      <img
+                        src={dayTimePic}
+                        alt="Day time window preview"
+                        className="block w-full object-cover scale-[1.06] origin-center"
+                      />
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -609,6 +704,10 @@ export default function Onboarding({ onComplete }) {
                           <div className="space-y-3">
                             {templates.map((t) => {
                               const active = selectedTasks.has(t.id);
+                              const cfg = taskConfig[t.id] || {};
+                              const frequency = cfg.frequency === "weekly" ? "weekly" : "daily";
+                              const daysOfWeek = Array.isArray(cfg.daysOfWeek) ? cfg.daysOfWeek : [];
+                              const weeklyDays = daysOfWeek.length ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
                               const selectedStyle = active
                                 ? {
                                     borderColor: domainColor,
@@ -616,35 +715,141 @@ export default function Onboarding({ onComplete }) {
                                   }
                                 : undefined;
                               return (
-                                <button
-                                  key={t.id}
-                                  type="button"
-                                  onClick={() => toggleTask(t.id)}
-                                  className={cx(
-                                    "w-full rounded-2xl border px-4 py-4 text-left transition",
-                                    active
-                                      ? isDark
-                                        ? "border-zinc-100 bg-white text-zinc-900"
-                                        : "border-zinc-900 bg-zinc-900 text-white"
-                                      : isDark
-                                      ? "border-zinc-800 bg-zinc-950/10 text-zinc-400"
-                                      : "border-zinc-200 bg-white text-zinc-500"
-                                  )}
-                                  style={selectedStyle}
-                                >
-                                  <div
-                                    className="text-sm font-semibold"
-                                    style={{
-                                      color: active
-                                        ? domainColor
+                                <div key={t.id} className="space-y-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleTask(t.id)}
+                                    className={cx(
+                                      "w-full rounded-2xl border px-4 py-4 text-left transition",
+                                      active
+                                        ? isDark
+                                          ? "border-zinc-100 bg-white text-zinc-900"
+                                          : "border-zinc-900 bg-zinc-900 text-white"
                                         : isDark
-                                        ? "rgba(255,255,255,0.6)"
-                                        : "rgba(17,24,39,0.55)",
-                                    }}
+                                        ? "border-zinc-800 bg-zinc-950/10 text-zinc-400"
+                                        : "border-zinc-200 bg-white text-zinc-500"
+                                    )}
+                                    style={selectedStyle}
                                   >
-                                    {t.name}
-                                  </div>
-                                </button>
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div
+                                        className="text-sm font-semibold"
+                                        style={{
+                                          color: active
+                                            ? domainColor
+                                            : isDark
+                                            ? "rgba(255,255,255,0.6)"
+                                            : "rgba(17,24,39,0.55)",
+                                        }}
+                                      >
+                                        {t.name}
+                                      </div>
+                                      {active ? (
+                                        <div
+                                          className={cx(
+                                            "flex items-center gap-1 rounded-full border p-0.5 text-sm font-semibold",
+                                            isDark ? "border-zinc-700 bg-zinc-900" : "border-zinc-200 bg-white"
+                                          )}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {["daily", "weekly"].map((opt) => {
+                                            const isActive = frequency === opt;
+                                            return (
+                                              <button
+                                                key={opt}
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  updateTaskConfig(t.id, "frequency", opt);
+                                                  if (opt === "weekly" && !daysOfWeek.length) {
+                                                    updateTaskConfig(t.id, "daysOfWeek", weeklyDays);
+                                                  }
+                                                  if (opt === "daily") {
+                                                    updateTaskConfig(t.id, "daysOfWeek", [0, 1, 2, 3, 4, 5, 6]);
+                                                  }
+                                                }}
+                                                className={cx(
+                                                  "rounded-full px-2.5 py-1 text-sm font-semibold transition",
+                                                  isActive
+                                                    ? isDark
+                                                      ? "bg-white text-zinc-900"
+                                                      : "bg-zinc-900 text-white"
+                                                    : isDark
+                                                    ? "text-zinc-400"
+                                                    : "text-zinc-600"
+                                                )}
+                                                style={
+                                                  isActive
+                                                    ? {
+                                                        backgroundColor: isDark ? "#ffffff" : "#111827",
+                                                        color: isDark ? "#111827" : "#ffffff",
+                                                      }
+                                                    : {
+                                                        backgroundColor: "transparent",
+                                                        color: isDark ? "#9CA3AF" : "#4B5563",
+                                                      }
+                                                }
+                                                aria-pressed={isActive}
+                                              >
+                                                {opt === "daily" ? "Daily" : "Weekly"}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <div
+                                      className={cx(
+                                        "mt-3 flex flex-wrap items-center justify-center gap-2 overflow-hidden transition-all",
+                                        active && frequency === "weekly" ? "opacity-100 max-h-20" : "opacity-0 max-h-0 pointer-events-none"
+                                      )}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {WEEKDAY_LABELS.map((label, idx) => {
+                                        const isActive = weeklyDays.includes(idx);
+                                        return (
+                                          <button
+                                            key={label}
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              const next = isActive ? weeklyDays.filter((d) => d !== idx) : [...weeklyDays, idx];
+                                              updateTaskConfig(t.id, "daysOfWeek", next.length ? next : weeklyDays);
+                                            }}
+                                            className={cx(
+                                              "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                                              isActive
+                                                ? "text-zinc-900"
+                                                : isDark
+                                                ? "border-zinc-700 text-zinc-400"
+                                                : "border-zinc-200 text-zinc-600"
+                                            )}
+                                            style={{
+                                              borderColor: isActive
+                                                ? domainColor
+                                                : isDark
+                                                ? "#0F172A"
+                                                : "#E5E7EB",
+                                              color: isActive
+                                                ? domainColor
+                                                : isDark
+                                                ? "#FFFFFF"
+                                                : "#6B7280",
+                                              backgroundColor: isActive
+                                                ? rgba(domainColor, isDark ? 0.2 : 0.12)
+                                                : isDark
+                                                ? "#374151"
+                                                : "#F3F4F6",
+                                            }}
+                                            aria-pressed={isActive}
+                                          >
+                                            {label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -1026,7 +1231,10 @@ export default function Onboarding({ onComplete }) {
                   isDark ? "border border-zinc-700 bg-zinc-900 text-zinc-100" : "border border-zinc-200 bg-white text-zinc-900"
                 )}
               >
-                Back
+                <span className="inline-flex items-center justify-center gap-2">
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </span>
               </button>
               <button
                 type="button"
@@ -1038,7 +1246,10 @@ export default function Onboarding({ onComplete }) {
                   step === 1 ? "animate-cta" : ""
                 )}
               >
-                {step === stepsTotal ? "Finish" : "Next"}
+                <span className="inline-flex items-center justify-center gap-2">
+                  {step === stepsTotal ? "Finish" : "Next"}
+                  <ArrowRight className="h-4 w-4" />
+                </span>
               </button>
             </div>
           ) : (
@@ -1052,7 +1263,10 @@ export default function Onboarding({ onComplete }) {
                 step === 1 ? "animate-cta" : ""
               )}
             >
-              {step === stepsTotal ? "Finish" : "Next"}
+              <span className="inline-flex items-center justify-center gap-2">
+                {step === stepsTotal ? "Finish" : "Next"}
+                <ArrowRight className="h-4 w-4" />
+              </span>
             </button>
           )}
         </div>

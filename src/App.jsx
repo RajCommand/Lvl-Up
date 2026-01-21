@@ -145,6 +145,34 @@ function getWeekDays(weekStart) {
   return days;
 }
 
+const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function dayIndexMonday(date) {
+  const day = date.getDay(); // 0 Sun
+  return (day + 6) % 7; // Mon=0
+}
+
+function normalizeFrequency(value) {
+  return value === "weekly" ? "weekly" : "daily";
+}
+
+function normalizeDaysOfWeek(days) {
+  if (!Array.isArray(days)) return [];
+  return days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+}
+
+function defaultWeeklyDays() {
+  return [0, 1, 2, 3, 4, 5, 6];
+}
+
+function isQuestScheduledForDate(q, date) {
+  const frequency = normalizeFrequency(q?.frequency);
+  if (frequency !== "weekly") return true;
+  const days = normalizeDaysOfWeek(q?.daysOfWeek);
+  if (!days.length) return true;
+  return days.includes(dayIndexMonday(date));
+}
+
 function buildWeeklyChartData(xpByDay, weekStart) {
   const keys = getWeekDays(weekStart);
   let cumulative = 0;
@@ -221,6 +249,8 @@ const DEFAULT_QUESTS = [
     baselineValue: 10,
     priority: "main",
     xp: 0,
+    frequency: "daily",
+    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
   },
   {
     id: "q_situps",
@@ -236,6 +266,8 @@ const DEFAULT_QUESTS = [
     baselineValue: 10,
     priority: "main",
     xp: 0,
+    frequency: "daily",
+    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
   },
   {
     id: "q_pullups",
@@ -251,6 +283,8 @@ const DEFAULT_QUESTS = [
     baselineValue: 5,
     priority: "main",
     xp: 0,
+    frequency: "daily",
+    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
   },
   {
     id: "q_run",
@@ -266,6 +300,8 @@ const DEFAULT_QUESTS = [
     baselineValue: 1.0,
     priority: "main",
     xp: 0,
+    frequency: "daily",
+    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
   },
 ];
 
@@ -472,6 +508,10 @@ function normalizeQuest(q) {
   const cap = xpCapForRank(rank);
   const xp = Number.isFinite(xpRaw) ? Math.min(xpRaw, cap) : 0;
   const safeStatus = status === "active" && !startedAt ? "idle" : status;
+  const frequency = normalizeFrequency(q.frequency || q.cadence);
+  let daysOfWeek = normalizeDaysOfWeek(q.daysOfWeek || q.weekDays);
+  if (frequency === "weekly" && !daysOfWeek.length) daysOfWeek = defaultWeeklyDays();
+  if (frequency === "daily") daysOfWeek = defaultWeeklyDays();
   return {
     ...q,
     category: domain,
@@ -491,6 +531,8 @@ function normalizeQuest(q) {
     elapsedMs: safeStatus === "completed" ? elapsedMs : 0,
     targetMinutes,
     graceMinutes,
+    frequency,
+    daysOfWeek,
   };
 }
 
@@ -521,6 +563,10 @@ function migrateSavedState(saved) {
       : 1;
     const targetMinutes = measurementType === "time" ? Math.max(1, Number(q.targetMinutes ?? currentTargetValue) || 1) : null;
     const graceMinutes = measurementType === "time" ? Number(q.graceMinutes ?? 10) : 0;
+    const frequency = normalizeFrequency(q.frequency || q.cadence);
+    let daysOfWeek = normalizeDaysOfWeek(q.daysOfWeek || q.weekDays);
+    if (frequency === "weekly" && !daysOfWeek.length) daysOfWeek = defaultWeeklyDays();
+    if (frequency === "daily") daysOfWeek = defaultWeeklyDays();
     return {
       ...q,
       category: domain,
@@ -533,6 +579,8 @@ function migrateSavedState(saved) {
       sTargetValue,
       targetMinutes,
       graceMinutes,
+      frequency,
+      daysOfWeek,
     };
   });
   if (!migrated.xpByDay) {
@@ -763,8 +811,10 @@ function DayInspector({ state, selectedDay, setState, isDark, border, surface, t
 
 function DayModalContent({ dayKey, state, setState, settings, isDark, border, textMuted }) {
   const entry = state.days[dayKey] || { completed: {}, earnedXP: 0, xpDebt: 0, note: "" };
-  const completed = state.quests.filter((q) => !!entry.completed?.[q.id]?.done);
-  const missedQuests = state.quests.filter((q) => !entry.completed?.[q.id]?.done);
+  const dayDate = new Date(`${dayKey}T00:00:00`);
+  const scheduled = state.quests.filter((q) => isQuestScheduledForDate(q, dayDate));
+  const completed = scheduled.filter((q) => !!entry.completed?.[q.id]?.done);
+  const missedQuests = scheduled.filter((q) => !entry.completed?.[q.id]?.done);
   const missed = entry.note === "(missed)";
 
   return (
@@ -777,7 +827,7 @@ function DayModalContent({ dayKey, state, setState, settings, isDark, border, te
         <div className={cx("rounded-xl border p-3", border)}>
           <div className={cx("text-xs", textMuted)}>Quests completed</div>
           <div className="mt-1 text-lg font-black">
-            {completed.length}/{state.quests.length}
+            {completed.length}/{scheduled.length}
           </div>
         </div>
       </div>
@@ -1420,6 +1470,7 @@ function HomeCalendarSection({
   );
 }
 function TodayQuestsSection({
+  dateKey,
   state,
   todays,
   settings,
@@ -1442,8 +1493,10 @@ function TodayQuestsSection({
   const [collapsingIds, setCollapsingIds] = useState([]);
   const [expandedCategories, setExpandedCategories] = useState(() => new Set());
   const [openQuestId, setOpenQuestId] = useState("");
-  const doneCount = state.quests.filter((q) => !!todays.completed?.[q.id]?.done).length;
-  const total = state.quests.length;
+  const todayDate = new Date(`${dateKey}T00:00:00`);
+  const scheduledQuests = state.quests.filter((q) => isQuestScheduledForDate(q, todayDate));
+  const doneCount = scheduledQuests.filter((q) => !!todays.completed?.[q.id]?.done).length;
+  const total = scheduledQuests.length;
   const percent = total ? Math.round((doneCount / total) * 100) : 0;
 
   const debt = todays.xpDebt || 0;
@@ -1455,7 +1508,7 @@ function TodayQuestsSection({
   ];
 
   function orderedQuestsForCategory(catId) {
-    return state.quests
+    return scheduledQuests
       .filter((q) => q.category === catId)
       .sort((a, b) => {
         const aDone = !!todays.completed?.[a.id]?.done;
@@ -1877,6 +1930,7 @@ function CalendarPanel({
 }
 
 function QuestsPanel({
+  dateKey,
   state,
   todays,
   settings,
@@ -1931,6 +1985,7 @@ function QuestsPanel({
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
         <TodayQuestsSection
+          dateKey={dateKey}
           state={state}
           todays={todays}
           settings={settings}
@@ -2025,6 +2080,9 @@ function QuestsPanel({
               const needsTarget = measurementRequiresTarget(measurementType);
               const isExpanded = !!expandedById[q.id];
               const domainStyle = getDomainStyle(domain, isDark);
+              const frequency = normalizeFrequency(q.frequency);
+              const daysOfWeek = normalizeDaysOfWeek(q.daysOfWeek);
+              const weeklyDays = daysOfWeek.length ? daysOfWeek : defaultWeeklyDays();
               return (
                 <div
                   key={q.id}
@@ -2221,6 +2279,111 @@ function QuestsPanel({
                             </option>
                           ))}
                         </select>
+                      </div>
+
+                      <div>
+                        <div className={cx("text-xs font-semibold", textMuted)}>Cadence</div>
+                        <div
+                          className={cx(
+                            "mt-1 inline-flex w-fit items-center gap-1 rounded-full border p-0.5 text-sm font-semibold",
+                            isDark ? "border-zinc-700 bg-zinc-900" : "border-zinc-200 bg-white"
+                          )}
+                        >
+                          {["daily", "weekly"].map((opt) => {
+                            const active = frequency === opt;
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() =>
+                                  updateQuest(q.id, {
+                                    frequency: opt,
+                                    daysOfWeek: opt === "weekly" ? weeklyDays : defaultWeeklyDays(),
+                                  })
+                                }
+                                className={cx(
+                                  "rounded-full px-2.5 py-1 text-sm font-semibold transition",
+                                  active
+                                    ? isDark
+                                      ? "bg-white text-zinc-900"
+                                      : "bg-zinc-900 text-white"
+                                    : isDark
+                                    ? "text-zinc-400"
+                                    : "text-zinc-600"
+                                )}
+                                style={
+                                  active
+                                    ? {
+                                        backgroundColor: isDark ? "#ffffff" : "#111827",
+                                        color: isDark ? "#111827" : "#ffffff",
+                                      }
+                                    : {
+                                        backgroundColor: "transparent",
+                                        color: isDark ? "#9CA3AF" : "#4B5563",
+                                      }
+                                }
+                                aria-pressed={active}
+                              >
+                                {opt === "daily" ? "Daily" : "Weekly"}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div
+                        className={cx(
+                          "transition-all overflow-hidden",
+                          frequency === "weekly" ? "opacity-100 max-h-20" : "opacity-0 max-h-0 pointer-events-none"
+                        )}
+                        style={{ gridColumn: "1 / -1" }}
+                      >
+                        <div className={cx("text-xs font-semibold", textMuted)}>Weekly days</div>
+                        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                          {WEEKDAY_LABELS.map((label, idx) => {
+                            const active = weeklyDays.includes(idx);
+                            return (
+                              <button
+                                key={label}
+                                type="button"
+                                onClick={() => {
+                                  if (!active && frequency !== "weekly") return;
+                                  const next = active ? weeklyDays.filter((d) => d !== idx) : [...weeklyDays, idx];
+                                  const safeNext = next.length ? next : weeklyDays;
+                                  updateQuest(q.id, { daysOfWeek: safeNext });
+                                }}
+                                className={cx(
+                                  "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                                  active
+                                    ? "text-zinc-900"
+                                    : isDark
+                                    ? "border-zinc-700 text-zinc-400"
+                                    : "border-zinc-200 text-zinc-600"
+                                )}
+                                style={{
+                                  borderColor: active
+                                    ? domainStyle.color
+                                    : isDark
+                                    ? "#0F172A"
+                                    : "#E5E7EB",
+                                  color: active
+                                    ? domainStyle.color
+                                    : isDark
+                                    ? "#FFFFFF"
+                                    : "#6B7280",
+                                  backgroundColor: active
+                                    ? rgba(domainStyle.color, isDark ? 0.2 : 0.12)
+                                    : isDark
+                                    ? "#374151"
+                                    : "#F3F4F6",
+                                }}
+                                aria-pressed={active}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
 
                       <div>
@@ -3486,6 +3649,8 @@ export default function LevelUpQuestBoard() {
           baselineValue: currentTargetValue,
           priority: "main",
           xp: 0,
+          frequency: "daily",
+          daysOfWeek: defaultWeeklyDays(),
           createdAt,
           status: "idle",
           startedAt: null,
@@ -3627,6 +3792,7 @@ export default function LevelUpQuestBoard() {
       ) : null}
       {tab === "quests" ? (
         <QuestsPanel
+          dateKey={dateKey}
           state={state}
           todays={todays}
           settings={settings}
