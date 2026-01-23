@@ -17,6 +17,7 @@ import {
   normalizeMeasurementType,
   unitTypeForMeasurement,
 } from "./taxonomy";
+import { buildQuestProgression } from "./utils/questProgression.js";
 
 /**
  * Level Up: Quest Board — Solo Leveling–inspired MVP (single-file)
@@ -101,6 +102,14 @@ function formatElapsed(ms) {
   return `${m}:${pad2(s)}`;
 }
 
+function formatDayReportDate(dayKey) {
+  return new Date(`${dayKey}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function computeAge(dob) {
   if (!dob) return null;
   const parsed = new Date(dob);
@@ -121,6 +130,22 @@ function isWithinDayWindow(settings, now = new Date()) {
   let nowMin = now.getHours() * 60 + now.getMinutes();
   if (nowMin < wakeMin) nowMin += 1440;
   return nowMin >= wakeMin && nowMin <= bedMin;
+}
+
+function dayWindowEndsAt(dayKey, settings) {
+  const wakeMin = parseTimeToMinutes(settings.wakeTime);
+  const bedRaw = parseTimeToMinutes(settings.bedTime);
+  const bedMin = bedRaw <= wakeMin ? bedRaw + 1440 : bedRaw;
+  const base = new Date(`${dayKey}T00:00:00`);
+  const end = new Date(base);
+  const endMinutes = bedMin % 1440;
+  end.setHours(Math.floor(endMinutes / 60), endMinutes % 60, 0, 0);
+  if (bedMin >= 1440) end.setDate(end.getDate() + 1);
+  return end;
+}
+
+function hasDayWindowEnded(dayKey, settings, now = new Date()) {
+  return now > dayWindowEndsAt(dayKey, settings);
 }
 
 function getWeekStart(date, wakeTime, weekStartsOnMonday = true) {
@@ -145,7 +170,8 @@ function getWeekDays(weekStart) {
   return days;
 }
 
-const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
+const DEFAULT_GRACE_MINUTES = 5;
 
 function dayIndexMonday(date) {
   const day = date.getDay(); // 0 Sun
@@ -161,15 +187,39 @@ function normalizeDaysOfWeek(days) {
   return days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
 }
 
+function createdAtToMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  return 0;
+}
+
+function createdAtToISO(value) {
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms)) return value;
+  }
+  const ms = createdAtToMs(value);
+  return new Date(ms || 0).toISOString();
+}
+
 function defaultWeeklyDays() {
   return [0, 1, 2, 3, 4, 5, 6];
+}
+
+function sessionsPerWeekFromConsistency(frequency, daysOfWeek) {
+  if (frequency !== "weekly") return 7;
+  const count = normalizeDaysOfWeek(daysOfWeek).length;
+  return Math.max(1, count);
 }
 
 function isQuestScheduledForDate(q, date) {
   const frequency = normalizeFrequency(q?.frequency);
   if (frequency !== "weekly") return true;
   const days = normalizeDaysOfWeek(q?.daysOfWeek);
-  if (!days.length) return true;
+  if (!days.length) return false;
   return days.includes(dayIndexMonday(date));
 }
 
@@ -478,26 +528,30 @@ function normalizeQuest(q) {
   if (!allowedMeasurements.includes(measurementType)) measurementType = allowedMeasurements[0];
   const unit = String(q.unit || inferred.unit || defaultUnitForMeasurement(measurementType)).trim();
   const unitType = unitTypeForMeasurement(measurementType);
-  const currentTargetRaw = Number(q.currentTargetValue ?? q.baseTarget ?? q.target ?? 1);
+  const progressionSeed = q.progression || {};
+  const progressionStart = Number(progressionSeed.startTarget);
+  const progressionS = Number(progressionSeed.sRankTarget);
+  const currentTargetRaw = Number(q.currentTargetValue ?? q.baseTarget ?? q.target ?? (Number.isFinite(progressionStart) ? progressionStart : 1));
   let currentTargetValue = Number.isFinite(currentTargetRaw) ? currentTargetRaw : 1;
   if (measurementRequiresTarget(measurementType)) currentTargetValue = Math.max(1, currentTargetValue);
-  else currentTargetValue = 1;
-  const sTargetRaw = Number(q.sTargetValue ?? defaultSTargetValue({ name: q.name, unitType, category: domain }));
+  else if (!Number.isFinite(progressionStart)) currentTargetValue = 1;
+  const sTargetRaw = Number(
+    q.sTargetValue ?? (Number.isFinite(progressionS) ? progressionS : defaultSTargetValue({ name: q.name, unitType, category: domain }))
+  );
   let sTargetValue =
     Number.isFinite(sTargetRaw) && sTargetRaw > 0
       ? sTargetRaw
       : defaultSTargetValue({ name: q.name, unitType, category: domain });
-  if (!measurementRequiresTarget(measurementType)) sTargetValue = 1;
+  if (!measurementRequiresTarget(measurementType) && !Number.isFinite(progressionS)) sTargetValue = 1;
   const baselineRaw = Number(q.lastTargetValue ?? q.baselineValue ?? currentTargetValue);
   const baselineValue = Number.isFinite(baselineRaw) ? baselineRaw : currentTargetValue;
-  const createdAtRaw = Number(q.createdAt ?? 0);
-  const createdAt = Number.isFinite(createdAtRaw) ? createdAtRaw : 0;
+  const createdAt = createdAtToISO(q.createdAt);
   const rawPriority = String(q.priority || (q.tier === "Side" ? "minor" : "main")).toLowerCase();
   const priority = rawPriority === "minor" ? "minor" : "main";
   const xpRaw = Number(q.xp ?? 0);
   const targetMinutesRaw = Number(q.targetMinutes ?? (measurementType === "time" ? currentTargetValue : NaN));
   const targetMinutes = measurementType === "time" && Number.isFinite(targetMinutesRaw) ? Math.max(1, targetMinutesRaw) : null;
-  const graceMinutesRaw = Number(q.graceMinutes ?? (targetMinutes ? 10 : 0));
+  const graceMinutesRaw = Number(targetMinutes ? DEFAULT_GRACE_MINUTES : 0);
   const graceMinutes = Number.isFinite(graceMinutesRaw) ? Math.max(0, graceMinutesRaw) : 0;
   const status =
     q.status === "active" || q.status === "completed" || q.status === "paused" ? q.status : "idle";
@@ -510,8 +564,18 @@ function normalizeQuest(q) {
   const safeStatus = status === "active" && !startedAt ? "idle" : status;
   const frequency = normalizeFrequency(q.frequency || q.cadence);
   let daysOfWeek = normalizeDaysOfWeek(q.daysOfWeek || q.weekDays);
-  if (frequency === "weekly" && !daysOfWeek.length) daysOfWeek = defaultWeeklyDays();
   if (frequency === "daily") daysOfWeek = defaultWeeklyDays();
+  const sessionsPerWeek = sessionsPerWeekFromConsistency(frequency, daysOfWeek);
+  const progression = buildQuestProgression({
+    sRankTarget: Number(progressionSeed.sRankTarget ?? sTargetValue ?? 1),
+    startTarget: Number(progressionSeed.startTarget ?? currentTargetValue ?? 1),
+    startTargetWasAuto:
+      typeof progressionSeed.startTargetWasAuto === "boolean"
+        ? progressionSeed.startTargetWasAuto
+        : Number(progressionSeed.startTarget ?? currentTargetValue ?? 1) ===
+          Math.max(1, Math.round((Number(progressionSeed.sRankTarget ?? sTargetValue ?? 1) || 1) * 0.1)),
+    sessionsPerWeek,
+  });
   return {
     ...q,
     category: domain,
@@ -533,6 +597,7 @@ function normalizeQuest(q) {
     graceMinutes,
     frequency,
     daysOfWeek,
+    progression,
   };
 }
 
@@ -552,21 +617,38 @@ function migrateSavedState(saved) {
     if (!allowed.includes(measurementType)) measurementType = allowed[0];
     const unit = String(q.unit || inferred.unit || defaultUnitForMeasurement(measurementType)).trim();
     const unitType = unitTypeForMeasurement(measurementType);
+    const progressionSeed = q.progression || {};
+    const progressionStart = Number(progressionSeed.startTarget);
+    const progressionS = Number(progressionSeed.sRankTarget);
     const currentTargetValue = measurementRequiresTarget(measurementType)
-      ? Math.max(1, Number(q.currentTargetValue ?? q.baseTarget ?? q.target ?? 1) || 1)
+      ? Math.max(1, Number(q.currentTargetValue ?? q.baseTarget ?? q.target ?? (Number.isFinite(progressionStart) ? progressionStart : 1)) || 1)
+      : Number.isFinite(progressionStart)
+      ? Math.max(1, progressionStart)
       : 1;
     const sTargetValue = measurementRequiresTarget(measurementType)
       ? Math.max(
           1,
-          Number(q.sTargetValue ?? defaultSTargetValue({ name: q.name, unitType, category: domain })) || 1
+          Number(q.sTargetValue ?? (Number.isFinite(progressionS) ? progressionS : defaultSTargetValue({ name: q.name, unitType, category: domain })) ) || 1
         )
+      : Number.isFinite(progressionS)
+      ? Math.max(1, progressionS)
       : 1;
     const targetMinutes = measurementType === "time" ? Math.max(1, Number(q.targetMinutes ?? currentTargetValue) || 1) : null;
-    const graceMinutes = measurementType === "time" ? Number(q.graceMinutes ?? 10) : 0;
+    const graceMinutes = measurementType === "time" ? DEFAULT_GRACE_MINUTES : 0;
     const frequency = normalizeFrequency(q.frequency || q.cadence);
     let daysOfWeek = normalizeDaysOfWeek(q.daysOfWeek || q.weekDays);
-    if (frequency === "weekly" && !daysOfWeek.length) daysOfWeek = defaultWeeklyDays();
     if (frequency === "daily") daysOfWeek = defaultWeeklyDays();
+    const sessionsPerWeek = sessionsPerWeekFromConsistency(frequency, daysOfWeek);
+    const progression = buildQuestProgression({
+      sRankTarget: Number(progressionSeed.sRankTarget ?? sTargetValue ?? 1),
+      startTarget: Number(progressionSeed.startTarget ?? currentTargetValue ?? 1),
+      startTargetWasAuto:
+        typeof progressionSeed.startTargetWasAuto === "boolean"
+          ? progressionSeed.startTargetWasAuto
+          : Number(progressionSeed.startTarget ?? currentTargetValue ?? 1) ===
+            Math.max(1, Math.round((Number(progressionSeed.sRankTarget ?? sTargetValue ?? 1) || 1) * 0.1)),
+      sessionsPerWeek,
+    });
     return {
       ...q,
       category: domain,
@@ -581,6 +663,7 @@ function migrateSavedState(saved) {
       graceMinutes,
       frequency,
       daysOfWeek,
+      progression,
     };
   });
   if (!migrated.xpByDay) {
@@ -595,10 +678,7 @@ function migrateSavedState(saved) {
 
 function buildDefaultState({ settings = DEFAULT_SETTINGS, quests = DEFAULT_QUESTS } = {}) {
   const key = fmtDateKey(today());
-  const normalizedQuests = quests.map((q) => {
-    const createdAt = typeof q.createdAt === "number" ? q.createdAt : 0;
-    return normalizeQuest({ ...q, createdAt });
-  });
+  const normalizedQuests = quests.map((q) => normalizeQuest(q));
   const totalXP = normalizedQuests.reduce((sum, q) => sum + (q.xp || 0), 0);
   return {
     quests: normalizedQuests,
@@ -676,7 +756,20 @@ function ProgressBar({ value, max, isDark }) {
   );
 }
 
-function Modal({ open, title, onClose, children, isDark, border, surface, textMuted, showClose = true, showHint = true }) {
+function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  isDark,
+  border,
+  surface,
+  textMuted,
+  showClose = true,
+  showHint = true,
+  subtitle = "",
+  headerMeta = "",
+}) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e) => {
@@ -716,6 +809,10 @@ function Modal({ open, title, onClose, children, isDark, border, surface, textMu
             <div className="min-w-0">
               <div className="truncate text-sm font-extrabold">{title}</div>
               {showHint ? <div className={cx("mt-0.5 text-xs", textMuted)}>Click outside or press Esc to close</div> : null}
+              {headerMeta ? (
+                <div className={cx("mt-1 text-xs font-semibold uppercase tracking-[0.2em]", textMuted)}>{headerMeta}</div>
+              ) : null}
+              {subtitle ? <div className={cx("mt-2 text-xs italic", textMuted)}>{subtitle}</div> : null}
             </div>
             {showClose ? (
               <Button variant="outline" onClick={onClose} isDark={isDark}>
@@ -816,6 +913,9 @@ function DayModalContent({ dayKey, state, setState, settings, isDark, border, te
   const completed = scheduled.filter((q) => !!entry.completed?.[q.id]?.done);
   const missedQuests = scheduled.filter((q) => !entry.completed?.[q.id]?.done);
   const missed = entry.note === "(missed)";
+  const dayWindowEnded = hasDayWindowEnded(dayKey, settings);
+  const pendingLabel = dayWindowEnded ? "Missed" : "Pending";
+  const pendingTone = dayWindowEnded ? "warn" : "neutral";
 
   return (
     <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
@@ -855,9 +955,9 @@ function DayModalContent({ dayKey, state, setState, settings, isDark, border, te
 
       <div>
         <div className="flex items-center justify-between">
-          <div className="text-sm font-extrabold">Achievements</div>
+          <div className="text-sm font-extrabold">Completed tasks</div>
           <Pill tone={completed.length ? "good" : "neutral"} isDark={isDark}>
-            {completed.length ? "Active" : "No clears"}
+            {completed.length ? "Done" : "None"}
           </Pill>
         </div>
         <div className="mt-2 space-y-2">
@@ -874,7 +974,7 @@ function DayModalContent({ dayKey, state, setState, settings, isDark, border, te
             ))
           ) : (
             <div className={cx("rounded-xl border p-3 text-sm", border)}>
-              <div className={cx("text-xs", textMuted)}>No completed quests recorded for this day.</div>
+              <div className={cx("text-xs", textMuted)}>No completed tasks recorded for this day.</div>
             </div>
           )}
         </div>
@@ -882,9 +982,9 @@ function DayModalContent({ dayKey, state, setState, settings, isDark, border, te
 
       <div>
         <div className="flex items-center justify-between">
-          <div className="text-sm font-extrabold">Missed</div>
-          <Pill tone={missedQuests.length ? "warn" : "good"} isDark={isDark}>
-            {missedQuests.length ? "Incomplete" : "All clear"}
+          <div className="text-sm font-extrabold">{pendingLabel}</div>
+          <Pill tone={missedQuests.length ? pendingTone : "good"} isDark={isDark}>
+            {missedQuests.length ? pendingLabel : "All clear"}
           </Pill>
         </div>
         <div className="mt-2 space-y-2">
@@ -893,13 +993,15 @@ function DayModalContent({ dayKey, state, setState, settings, isDark, border, te
               <div key={q.id} className={cx("rounded-xl border p-3", border)}>
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-bold">{q.name}</div>
-                  <Pill isDark={isDark}>Missed</Pill>
+                  <Pill isDark={isDark}>{pendingLabel}</Pill>
                 </div>
               </div>
             ))
           ) : (
             <div className={cx("rounded-xl border p-3 text-sm", border)}>
-              <div className={cx("text-xs", textMuted)}>Nothing missed for this day.</div>
+              <div className={cx("text-xs", textMuted)}>
+                {dayWindowEnded ? "Nothing missed for this day." : "Nothing pending for this day."}
+              </div>
             </div>
           )}
         </div>
@@ -1084,7 +1186,6 @@ function BottomTabs({ tab, setTab, isDark }) {
               >
                 <div className="flex flex-col items-center gap-1.5">
                   <Icon className={cx("h-6 w-6", active ? "opacity-100" : "opacity-80", accentIconCls)} />
-                  <span className="leading-none">{it.label}</span>
                 </div>
               </button>
             );
@@ -1134,14 +1235,14 @@ function Header() {
           <div className="text-2xl font-black leading-8 tracking-tight">Level Up</div>
           <button
             className={cx(
-              "inline-flex h-8 w-8 items-center justify-center rounded-full border transition",
+              "inline-flex h-12 w-12 items-center justify-center rounded-full border transition",
               isDark ? "border-zinc-800 bg-zinc-900 hover:bg-zinc-800" : "border-zinc-200 bg-white hover:bg-zinc-50"
             )}
             onClick={onOpenSettings}
             aria-label="Open settings"
             title="Settings"
           >
-            <IconGear className="h-4 w-4" />
+            <IconGear className="h-6 w-6" />
           </button>
         </div>
 
@@ -1268,13 +1369,14 @@ function HomeCalendarSection({
   textMuted,
 }) {
   const [viewMode, setViewMode] = useState("month");
+  const [weekCursor, setWeekCursor] = useState(dateKey);
   const [showHint, setShowHint] = useState(false);
   const todayDate = new Date(dateKey);
   const totalQuests = state.quests.length;
 
   function dayStatus(date) {
     const key = fmtDateKey(date);
-    if (key <= joinDateKey) return "inactive";
+    if (key < joinDateKey) return "inactive";
     const entry = state.days[key];
     const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     const isFuture = dateOnly > todayDate;
@@ -1293,7 +1395,7 @@ function HomeCalendarSection({
     none: "bg-transparent",
   };
 
-  const weekStart = startOfWeek(new Date(selectedDay));
+  const weekStart = startOfWeek(new Date(viewMode === "week" ? weekCursor : selectedDay));
   const weekDates = Array.from({ length: 7 }).map((_, idx) => {
     const d = new Date(weekStart);
     d.setDate(weekStart.getDate() + idx);
@@ -1301,9 +1403,9 @@ function HomeCalendarSection({
   });
 
   function moveWeek(delta) {
-    const d = new Date(selectedDay);
+    const d = new Date(weekCursor);
     d.setDate(d.getDate() + delta * 7);
-    setSelectedDay(fmtDateKey(d));
+    setWeekCursor(fmtDateKey(d));
   }
 
   return (
@@ -1321,7 +1423,10 @@ function HomeCalendarSection({
           >
             <button
               type="button"
-              onClick={() => setViewMode("week")}
+              onClick={() => {
+                setWeekCursor(dateKey);
+                setViewMode("week");
+              }}
               className={cx(
                 "rounded-full px-3 py-1 text-xs font-semibold transition",
                 viewMode === "week" ? (isDark ? "bg-white text-black" : "bg-black text-white") : textMuted
@@ -1412,12 +1517,21 @@ function HomeCalendarSection({
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-        ) : null}
+        ) : (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => moveWeek(-1)} isDark={isDark} aria-label="Previous week" title="Previous week">
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" onClick={() => moveWeek(1)} isDark={isDark} aria-label="Next week" title="Next week">
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className={cx("mt-4 rounded-2xl border p-3", border, isDark ? "bg-zinc-950/10" : "bg-white")}>
         <div className={cx("grid grid-cols-7 gap-2 text-xs font-semibold", textMuted)}>
-          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+          {WEEKDAY_LABELS.map((d) => (
             <div key={d} className="px-1">
               {d}
             </div>
@@ -1435,7 +1549,9 @@ function HomeCalendarSection({
               <button
                 key={`${key}-${idx}`}
                 onClick={() => {
+                  if (isInactive) return;
                   setSelectedDay(key);
+                  if (viewMode === "week") setWeekCursor(key);
                   setModalDayKey(key);
                   setDayModalOpen(true);
                   setShowHint(false);
@@ -1456,13 +1572,15 @@ function HomeCalendarSection({
       </div>
 
       <Modal
-        open={dayModalOpen}
-        title={`Day Report • ${modalDayKey}`}
+        open={dayModalOpen && modalDayKey >= joinDateKey}
+        title="Day Report"
         onClose={() => setDayModalOpen(false)}
         isDark={isDark}
         border={border}
         surface={surface}
         textMuted={textMuted}
+        showHint={false}
+        headerMeta={formatDayReportDate(modalDayKey)}
       >
         <DayModalContent dayKey={modalDayKey} state={state} setState={setState} settings={settings} isDark={isDark} border={border} textMuted={textMuted} />
       </Modal>
@@ -1488,11 +1606,15 @@ function TodayQuestsSection({
   surface,
   textMuted,
   textSoft,
+  onAddQuest,
+  justCreatedId,
+  justCreatedDomain,
 }) {
   const holdRef = useRef({});
   const [collapsingIds, setCollapsingIds] = useState([]);
   const [expandedCategories, setExpandedCategories] = useState(() => new Set());
   const [openQuestId, setOpenQuestId] = useState("");
+  const categoryRefs = useRef({});
   const todayDate = new Date(`${dateKey}T00:00:00`);
   const scheduledQuests = state.quests.filter((q) => isQuestScheduledForDate(q, todayDate));
   const doneCount = scheduledQuests.filter((q) => !!todays.completed?.[q.id]?.done).length;
@@ -1507,6 +1629,19 @@ function TodayQuestsSection({
     { id: "life", label: "Life" },
   ];
 
+  useEffect(() => {
+    if (!justCreatedDomain) return;
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      next.add(justCreatedDomain);
+      return next;
+    });
+    const node = categoryRefs.current[justCreatedDomain];
+    if (node && node.scrollIntoView) {
+      node.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [justCreatedDomain]);
+
   function orderedQuestsForCategory(catId) {
     return scheduledQuests
       .filter((q) => q.category === catId)
@@ -1515,7 +1650,7 @@ function TodayQuestsSection({
         const bDone = !!todays.completed?.[b.id]?.done;
         if (aDone !== bDone) return aDone ? 1 : -1;
         if (a.priority !== b.priority) return a.priority === "main" ? -1 : 1;
-        return (b.createdAt || 0) - (a.createdAt || 0);
+        return createdAtToMs(b.createdAt) - createdAtToMs(a.createdAt);
       });
   }
 
@@ -1653,7 +1788,12 @@ function TodayQuestsSection({
                 </div>
                 {isTimed ? (
                   <>
-                    <div className="mt-1">Grace period: {q.graceMinutes} min</div>
+                    <div className="mt-1">
+                      Timer window: {q.targetMinutes + (typeof q.graceMinutes === "number" ? q.graceMinutes : DEFAULT_GRACE_MINUTES)} min
+                    </div>
+                    <div className="mt-1">
+                      Grace period: {typeof q.graceMinutes === "number" ? q.graceMinutes : DEFAULT_GRACE_MINUTES} min (extra setup time).
+                    </div>
                     <div className="mt-1">If you have breaks, schedule them inside this window.</div>
                     <div className="mt-1">This task must be started.</div>
                     <div className="mt-1">Complete within the allotted time to count.</div>
@@ -1693,12 +1833,7 @@ function TodayQuestsSection({
   return (
     <Card className="p-4" border={border} surface={surface}>
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-lg font-extrabold">Today’s Quests</div>
-          <div className={cx("mt-1 text-sm", textMuted)}>
-            {fmtDateKey(today())} • {doneCount}/{total} completed • {todays.earnedXP || 0} XP gained today
-          </div>
-        </div>
+        <div className="text-lg font-extrabold">Today’s Quests</div>
         <Pill tone={percent >= 80 ? "good" : percent >= 40 ? "warn" : "bad"} isDark={isDark}>
           {percent}%
         </Pill>
@@ -1728,19 +1863,26 @@ function TodayQuestsSection({
       ) : null}
 
       <div className="mt-4 space-y-4">
-        {categories.map((cat) => {
-          const list = orderedQuestsForCategory(cat.id);
-          if (!list.length) return null;
-          const expanded = expandedCategories.has(cat.id);
-          const visible = expanded ? list : list.slice(0, 2);
-          const Icon = categoryIconForName(cat.label);
-          const headerColor = getDomainColor(cat.id);
-          const completedCount = list.filter((q) => !!todays.completed?.[q.id]?.done).length;
-          return (
-            <div key={cat.id} className={cx("rounded-2xl border p-3", border)}>
-              <button
-                type="button"
-                onClick={() => {
+            {categories.map((cat) => {
+              const list = orderedQuestsForCategory(cat.id);
+              if (!list.length) return null;
+              const expanded = expandedCategories.has(cat.id);
+              const visible = expanded ? list : list.slice(0, 2);
+              const Icon = categoryIconForName(cat.label);
+              const headerColor = getDomainColor(cat.id);
+              const completedCount = list.filter((q) => !!todays.completed?.[q.id]?.done).length;
+              const isJustCreatedDomain = cat.id === justCreatedDomain;
+              return (
+                <div
+                  key={cat.id}
+                  ref={(node) => {
+                    categoryRefs.current[cat.id] = node;
+                  }}
+                  className={cx("rounded-2xl border p-3", border, isJustCreatedDomain ? "animate-pulse" : "")}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
                   setExpandedCategories((prev) => {
                     const next = new Set(prev);
                     if (next.has(cat.id)) next.delete(cat.id);
@@ -1761,12 +1903,19 @@ function TodayQuestsSection({
                   <span className={cx("text-xs font-semibold", textMuted)}>{expanded ? "Show less" : "Show all"}</span>
                 </div>
               </button>
-              <div className="mt-3 space-y-3">
-                {visible.map((q) => renderQuestCard(q))}
+                <div className="mt-3 space-y-3">
+                  {visible.map((q) => {
+                    const isJustCreated = q.id === justCreatedId;
+                    return (
+                      <div key={q.id} className={isJustCreated ? "animate-pulse" : ""}>
+                        {renderQuestCard(q)}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
       </div>
 
     </Card>
@@ -1796,7 +1945,7 @@ function CalendarPanel({
   const nowKey = dateKey;
 
   function dayTone(key) {
-    if (key <= joinDateKey) return "inactive";
+    if (key < joinDateKey) return "inactive";
     const e = state.days[key];
     if (!e) return "none";
     if (e.xpDebt > 0) return "debt";
@@ -1852,7 +2001,7 @@ function CalendarPanel({
         </div>
 
         <div className={cx("mt-4 grid grid-cols-7 gap-2 text-xs font-semibold", textMuted)}>
-          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+          {WEEKDAY_LABELS.map((d) => (
             <div key={d} className="px-1">
               {d}
             </div>
@@ -1872,6 +2021,7 @@ function CalendarPanel({
               <button
                 key={idx}
                 onClick={() => {
+                  if (isInactive) return;
                   setSelectedDay(key);
                   setModalDayKey(key);
                   setDayModalOpen(true);
@@ -1915,13 +2065,15 @@ function CalendarPanel({
       />
 
       <Modal
-        open={dayModalOpen}
-        title={`Day Report • ${modalDayKey}`}
+        open={dayModalOpen && modalDayKey >= joinDateKey}
+        title="Day Report"
         onClose={() => setDayModalOpen(false)}
         isDark={isDark}
         border={border}
         surface={surface}
         textMuted={textMuted}
+        showHint={false}
+        headerMeta={formatDayReportDate(modalDayKey)}
       >
         <DayModalContent dayKey={modalDayKey} state={state} setState={setState} settings={settings} isDark={isDark} border={border} textMuted={textMuted} />
       </Modal>
@@ -1955,11 +2107,29 @@ function QuestsPanel({
   const [editorOpen, setEditorOpen] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [expandedById, setExpandedById] = useState({});
+  const [justCreatedId, setJustCreatedId] = useState("");
+  const [justCreatedDomain, setJustCreatedDomain] = useState("");
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [newDomain, setNewDomain] = useState("body");
+  const [newActivityKind, setNewActivityKind] = useState("strength");
+  const [newMeasurementType, setNewMeasurementType] = useState("reps");
+  const [newName, setNewName] = useState("New Quest");
+  const [newPriority, setNewPriority] = useState("main");
+  const [newUnit, setNewUnit] = useState("reps");
+  const [newSTarget, setNewSTarget] = useState("");
+  const [newStartOverrideValue, setNewStartOverrideValue] = useState(10);
+  const [newStartOverrideActive, setNewStartOverrideActive] = useState(false);
+  const [showStartAdjust, setShowStartAdjust] = useState(false);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [newFrequency, setNewFrequency] = useState("daily");
+  const [newDaysOfWeek, setNewDaysOfWeek] = useState([]);
+  const [createError, setCreateError] = useState("");
+  const planTimeoutRef = useRef(null);
   const filterOptions = ["all", ...QUEST_CATEGORIES];
 
   const editorList = (categoryFilter === "all" ? state.quests : state.quests.filter((q) => q.category === categoryFilter))
     .slice()
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    .sort((a, b) => createdAtToMs(b.createdAt) - createdAtToMs(a.createdAt));
 
   function toggleExpanded(id) {
     setExpandedById((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -1981,9 +2151,108 @@ function QuestsPanel({
     setExpandedById(next);
   }
 
+  useEffect(() => {
+    if (!justCreatedId) return;
+    const t = setTimeout(() => {
+      setJustCreatedId("");
+      setJustCreatedDomain("");
+    }, 1400);
+    return () => clearTimeout(t);
+  }, [justCreatedId]);
+
+  const newActivityOptions = ACTIVITY_TYPES_BY_DOMAIN[newDomain] || ACTIVITY_TYPES_BY_DOMAIN.life;
+  const newAllowedMeasurements = allowedKindsForCategory(newDomain, newActivityKind);
+  const effectiveNewMeasurement = newAllowedMeasurements.includes(newMeasurementType) ? newMeasurementType : newAllowedMeasurements[0];
+  const goalValue = Number(newSTarget);
+  const hasGoal = Number.isFinite(goalValue) && goalValue > 0;
+  const requiresGoal = measurementRequiresTarget(effectiveNewMeasurement);
+  const trimmedName = newName.trim();
+  const unitRequired = effectiveNewMeasurement !== "habit";
+  const trimmedUnit = String(newUnit || "").trim();
+  const needsWeeklyDays = newFrequency === "weekly" && newDaysOfWeek.length === 0;
+  const togglePillClass = "rounded-full px-2.5 py-1 text-sm font-semibold transition";
+  const validationError = !trimmedName
+    ? "Quest name is required."
+    : unitRequired && !trimmedUnit
+    ? "Unit is required for this metric."
+    : needsWeeklyDays
+    ? "Pick at least one day for weekly quests."
+    : requiresGoal && !hasGoal
+    ? "Set a target goal to generate your routine."
+    : "";
+  const canCreate = !validationError;
+  const sessionsPerWeek = sessionsPerWeekFromConsistency(newFrequency, newDaysOfWeek);
+  const progressionPreview = buildQuestProgression({
+    sRankTarget: hasGoal ? goalValue : 1,
+    startTarget: newStartOverrideActive ? newStartOverrideValue : undefined,
+    startTargetWasAuto: !newStartOverrideActive,
+    sessionsPerWeek,
+  });
+  const unitDisplay = newUnit || (effectiveNewMeasurement === "habit" ? "x" : measurementLabel(effectiveNewMeasurement));
+
+  useEffect(() => {
+    return () => {
+      if (planTimeoutRef.current) clearTimeout(planTimeoutRef.current);
+    };
+  }, []);
+
+  function defaultTargetForMeasurement(measurementType) {
+    if (measurementType === "distance") return 1;
+    if (measurementType === "time") return 15;
+    if (measurementType === "count") return 1;
+    return 10;
+  }
+
+  function resetNewQuestDefaults(domain = "body") {
+    const nextDomain = normalizeQuestCategory(domain);
+    const nextActivityOptions = ACTIVITY_TYPES_BY_DOMAIN[nextDomain] || ACTIVITY_TYPES_BY_DOMAIN.life;
+    const nextActivity = nextActivityOptions[0]?.id || "admin";
+    const nextAllowed = allowedKindsForCategory(nextDomain, nextActivity);
+    const nextMeasurement = nextAllowed[0] || "reps";
+    const nextUnit = defaultUnitForMeasurement(nextMeasurement);
+    const nextUnitType = unitTypeForMeasurement(nextMeasurement);
+    const nextCurrent = defaultTargetForMeasurement(nextMeasurement);
+    const nextSTarget = "";
+    setNewDomain(nextDomain);
+    setNewActivityKind(nextActivity);
+    setNewMeasurementType(nextMeasurement);
+    setNewName("New Quest");
+    setNewPriority("main");
+    setNewUnit(nextUnit);
+    setNewSTarget(nextSTarget);
+    setNewStartOverrideValue(nextCurrent);
+    setNewStartOverrideActive(false);
+    setShowStartAdjust(false);
+    setIsGeneratingPlan(false);
+    setNewFrequency("daily");
+    setNewDaysOfWeek([]);
+    setCreateError("");
+  }
+
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
+        <div className={cx("rounded-2xl border p-3", border, surface)}>
+          <button
+            type="button"
+            onClick={() => {
+              resetNewQuestDefaults(newDomain);
+              setAddModalOpen(true);
+            }}
+            className={cx(
+              "flex w-full items-center justify-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold transition",
+              isDark
+                ? "border-zinc-800 bg-zinc-950/20 text-zinc-100 hover:bg-zinc-900"
+                : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-100"
+            )}
+            aria-label="Forge a new quest"
+            title="Forge a new quest"
+          >
+            <span className="text-4xl font-black leading-none">+</span>
+            <span>Forge a New Quest</span>
+          </button>
+        </div>
+
         <TodayQuestsSection
           dateKey={dateKey}
           state={state}
@@ -2003,6 +2272,12 @@ function QuestsPanel({
           surface={surface}
           textMuted={textMuted}
           textSoft={textSoft}
+          onAddQuest={() => {
+            resetNewQuestDefaults(newDomain);
+            setAddModalOpen(true);
+          }}
+          justCreatedId={justCreatedId}
+          justCreatedDomain={justCreatedDomain}
         />
 
         <div className={cx("rounded-2xl border p-3", border, surface)}>
@@ -2024,9 +2299,6 @@ function QuestsPanel({
         <div className="flex h-[70vh] flex-col gap-4">
           <div className="flex items-center justify-between gap-3">
             <div className={cx("text-xs", textMuted)}>Edit quests, targets, and priority.</div>
-            <Button onClick={addQuest} isDark={isDark}>
-              Add Quest
-            </Button>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -2082,12 +2354,25 @@ function QuestsPanel({
               const domainStyle = getDomainStyle(domain, isDark);
               const frequency = normalizeFrequency(q.frequency);
               const daysOfWeek = normalizeDaysOfWeek(q.daysOfWeek);
-              const weeklyDays = daysOfWeek.length ? daysOfWeek : defaultWeeklyDays();
+              const weeklyDays = daysOfWeek;
+              const unitDisplay = unitValue || (measurementType === "habit" ? "x" : measurementLabel(measurementType));
+              const sessionsPerWeek = sessionsPerWeekFromConsistency(frequency, weeklyDays);
+              const progressionPreview = buildQuestProgression({
+                sRankTarget: needsTarget ? Math.max(1, Number(q.sTargetValue) || 1) : 1,
+                startTarget: needsTarget ? Math.max(1, Number(q.currentTargetValue) || 1) : 1,
+                startTargetWasAuto: q.progression?.startTargetWasAuto ?? false,
+                sessionsPerWeek,
+              });
+              const isTimed = measurementType === "time";
+              const isJustCreated = q.id === justCreatedId;
               return (
                 <div
                   key={q.id}
-                  className={cx("rounded-2xl border p-3", border)}
-                  style={{ borderColor: domainStyle.borderColor }}
+                  className={cx("rounded-2xl border p-3", border, isJustCreated ? "animate-pulse" : "")}
+                  style={{
+                    borderColor: domainStyle.borderColor,
+                    boxShadow: isJustCreated ? `0 0 0 2px ${rgba(domainStyle.color, 0.35)}` : "none",
+                  }}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -2135,157 +2420,289 @@ function QuestsPanel({
                   </div>
 
                   {isExpanded ? (
-                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="mt-3 space-y-4">
                       <div>
                         <div className={cx("text-xs font-semibold", textMuted)}>Domain</div>
-                        <select
-                          value={domain}
-                          onChange={(e) => {
-                            const nextDomain = normalizeQuestCategory(e.target.value);
-                            const nextActivity = normalizeActivityKind(nextDomain, q.activityKind);
-                            const nextAllowed = allowedKindsForCategory(nextDomain, nextActivity);
-                            const nextMeasurement = nextAllowed.includes(measurementType) ? measurementType : nextAllowed[0];
-                            const nextUnitType = unitTypeForMeasurement(nextMeasurement);
-                            const nextUnit =
-                              nextMeasurement === "count"
-                                ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
-                                : defaultUnitForMeasurement(nextMeasurement);
-                            const nextTarget = measurementRequiresTarget(nextMeasurement)
-                              ? Math.max(1, Number(q.currentTargetValue) || 1)
-                              : 1;
-                            const nextSTarget = measurementRequiresTarget(nextMeasurement)
-                              ? Math.max(
-                                  1,
-                                  Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: nextDomain })
-                                )
-                              : 1;
-                            const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
-                            const nextGrace = nextMeasurement === "time" ? Number(q.graceMinutes ?? 10) : 0;
-                            updateQuest(q.id, {
-                              category: nextDomain,
-                              domain: nextDomain,
-                              activityKind: nextActivity,
-                              measurementType: nextMeasurement,
-                              unitType: nextUnitType,
-                              unit: nextUnit,
-                              currentTargetValue: nextTarget,
-                              sTargetValue: nextSTarget,
-                              targetMinutes: nextTargetMinutes,
-                              graceMinutes: nextGrace,
-                            });
-                          }}
-                          className={cx(
-                            "mt-1 w-full rounded-xl border p-2 text-sm",
-                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                          )}
-                        >
-                          {QUEST_CATEGORIES.map((cat) => (
-                            <option key={cat} value={cat}>
-                              {categoryLabel(cat)}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {QUEST_CATEGORIES.map((cat) => {
+                            const active = domain === cat;
+                            const color = DOMAIN_COLORS[cat] || "#94A3B8";
+                            return (
+                              <button
+                                key={cat}
+                                type="button"
+                                onClick={() => {
+                                  const nextDomain = normalizeQuestCategory(cat);
+                                  const nextActivity = normalizeActivityKind(nextDomain, q.activityKind);
+                                  const nextAllowed = allowedKindsForCategory(nextDomain, nextActivity);
+                                  const nextMeasurement = nextAllowed.includes(measurementType) ? measurementType : nextAllowed[0];
+                                  const nextUnitType = unitTypeForMeasurement(nextMeasurement);
+                                  const nextUnit =
+                                    nextMeasurement === "count"
+                                      ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
+                                      : defaultUnitForMeasurement(nextMeasurement);
+                                  const nextTarget = measurementRequiresTarget(nextMeasurement)
+                                    ? Math.max(1, Number(q.currentTargetValue) || 1)
+                                    : 1;
+                                  const nextSTarget = measurementRequiresTarget(nextMeasurement)
+                                    ? Math.max(
+                                        1,
+                                        Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: nextDomain })
+                                      )
+                                    : 1;
+                                  const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
+                                  const nextGrace = nextMeasurement === "time" ? DEFAULT_GRACE_MINUTES : 0;
+                                  updateQuest(q.id, {
+                                    category: nextDomain,
+                                    domain: nextDomain,
+                                    activityKind: nextActivity,
+                                    measurementType: nextMeasurement,
+                                    unitType: nextUnitType,
+                                    unit: nextUnit,
+                                    currentTargetValue: nextTarget,
+                                    sTargetValue: nextSTarget,
+                                    targetMinutes: nextTargetMinutes,
+                                    graceMinutes: nextGrace,
+                                  });
+                                }}
+                                className={cx(
+                                  "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                                  active
+                                    ? isDark
+                                      ? "border-zinc-100 text-zinc-100"
+                                      : "border-zinc-900 text-zinc-900"
+                                    : isDark
+                                    ? "border-zinc-800 text-zinc-400"
+                                    : "border-zinc-200 text-zinc-600"
+                                )}
+                                style={
+                                  active
+                                    ? { borderColor: color, color, backgroundColor: rgba(color, isDark ? 0.18 : 0.12) }
+                                    : undefined
+                                }
+                                aria-pressed={active}
+                              >
+                                {categoryLabel(cat)}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
 
                       <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>Activity Type</div>
-                        <select
-                          value={q.activityKind || activityOptions[0]?.id}
-                          onChange={(e) => {
-                            const nextActivity = normalizeActivityKind(domain, e.target.value);
-                            const nextAllowed = allowedKindsForCategory(domain, nextActivity);
-                            const nextMeasurement = nextAllowed.includes(measurementType) ? measurementType : nextAllowed[0];
-                            const nextUnitType = unitTypeForMeasurement(nextMeasurement);
-                            const nextUnit =
-                              nextMeasurement === "count"
-                                ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
-                                : defaultUnitForMeasurement(nextMeasurement);
-                            const nextTarget = measurementRequiresTarget(nextMeasurement)
-                              ? Math.max(1, Number(q.currentTargetValue) || 1)
-                              : 1;
-                            const nextSTarget = measurementRequiresTarget(nextMeasurement)
-                              ? Math.max(
-                                  1,
-                                  Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: domain })
-                                )
-                              : 1;
-                            const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
-                            const nextGrace = nextMeasurement === "time" ? Number(q.graceMinutes ?? 10) : 0;
-                            updateQuest(q.id, {
-                              activityKind: nextActivity,
-                              measurementType: nextMeasurement,
-                              unitType: nextUnitType,
-                              unit: nextUnit,
-                              currentTargetValue: nextTarget,
-                              sTargetValue: nextSTarget,
-                              targetMinutes: nextTargetMinutes,
-                              graceMinutes: nextGrace,
-                            });
-                          }}
+                        <div className={cx("text-xs font-semibold", textMuted)}>Quest Name</div>
+                        <input
+                          value={q.name}
+                          onChange={(e) => updateQuest(q.id, { name: e.target.value })}
                           className={cx(
                             "mt-1 w-full rounded-xl border p-2 text-sm",
                             isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
                           )}
-                        >
-                          {activityOptions.map((opt) => (
-                            <option key={opt.id} value={opt.id}>
+                        />
+                      </div>
+
+                      <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+                        <div className="text-sm font-extrabold">How is this quest completed?</div>
+
+                        <div className="mt-3">
+                          <div className={cx("text-xs font-semibold", textMuted)}>Type</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {activityOptions.map((opt) => {
+                              const active = q.activityKind === opt.id;
+                              const color = DOMAIN_COLORS[domain] || "#94A3B8";
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    const nextActivity = normalizeActivityKind(domain, opt.id);
+                                    const nextAllowed = allowedKindsForCategory(domain, nextActivity);
+                                    const nextMeasurement = nextAllowed.includes(measurementType) ? measurementType : nextAllowed[0];
+                                    const nextUnitType = unitTypeForMeasurement(nextMeasurement);
+                                    const nextUnit =
+                                      nextMeasurement === "count"
+                                        ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
+                                        : defaultUnitForMeasurement(nextMeasurement);
+                                    const nextTarget = measurementRequiresTarget(nextMeasurement)
+                                      ? Math.max(1, Number(q.currentTargetValue) || 1)
+                                      : 1;
+                                    const nextSTarget = measurementRequiresTarget(nextMeasurement)
+                                      ? Math.max(
+                                          1,
+                                          Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: domain })
+                                        )
+                                      : 1;
+                                    const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
+                                    const nextGrace = nextMeasurement === "time" ? DEFAULT_GRACE_MINUTES : 0;
+                                    updateQuest(q.id, {
+                                      activityKind: nextActivity,
+                                      measurementType: nextMeasurement,
+                                      unitType: nextUnitType,
+                                      unit: nextUnit,
+                                      currentTargetValue: nextTarget,
+                                      sTargetValue: nextSTarget,
+                                      targetMinutes: nextTargetMinutes,
+                                      graceMinutes: nextGrace,
+                                    });
+                                  }}
+                                  className={cx(
+                                    "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                                    active
+                                      ? isDark
+                                        ? "border-zinc-100 text-zinc-100"
+                                        : "border-zinc-900 text-zinc-900"
+                                      : isDark
+                                      ? "border-zinc-800 text-zinc-400"
+                                      : "border-zinc-200 text-zinc-600"
+                                  )}
+                                  style={
+                                    active
+                                      ? { borderColor: color, color, backgroundColor: rgba(color, isDark ? 0.18 : 0.12) }
+                                      : undefined
+                                  }
+                                  aria-pressed={active}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <div className={cx("text-xs font-semibold", textMuted)}>Metric</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {[
+                              { id: "reps", label: "Reps", unit: "reps" },
+                              { id: "time", label: "Time", unit: "min" },
+                              { id: "distance", label: "Distance", unit: "km" },
+                              { id: "count", label: "Count", unit: "x" },
+                              { id: "habit", label: "Habit", unit: "" },
+                            ].map((opt) => {
+                              const active = measurementType === opt.id;
+                              const isAllowed = allowedKinds.includes(opt.id);
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    if (!isAllowed) return;
+                                    const nextMeasurement = normalizeMeasurementType(opt.id);
+                                    const nextUnitType = unitTypeForMeasurement(nextMeasurement);
+                                    const nextUnit =
+                                      nextMeasurement === "count"
+                                        ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
+                                        : defaultUnitForMeasurement(nextMeasurement);
+                                    const nextTarget = measurementRequiresTarget(nextMeasurement)
+                                      ? Math.max(1, Number(q.currentTargetValue) || 1)
+                                      : 1;
+                                    const nextSTarget = measurementRequiresTarget(nextMeasurement)
+                                      ? Math.max(
+                                          1,
+                                          Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: domain })
+                                        )
+                                      : 1;
+                                    const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
+                                    const nextGrace = nextMeasurement === "time" ? DEFAULT_GRACE_MINUTES : 0;
+                                    updateQuest(q.id, {
+                                      measurementType: nextMeasurement,
+                                      unitType: nextUnitType,
+                                      unit: nextUnit,
+                                      currentTargetValue: nextTarget,
+                                      sTargetValue: nextSTarget,
+                                      targetMinutes: nextTargetMinutes,
+                                      graceMinutes: nextGrace,
+                                    });
+                                  }}
+                                  className={cx(
+                                    "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                                    active
+                                      ? isDark
+                                        ? "border-zinc-100 text-zinc-100"
+                                        : "border-zinc-900 text-zinc-900"
+                                      : isDark
+                                      ? "border-zinc-800 text-zinc-400"
+                                      : "border-zinc-200 text-zinc-600",
+                                    !isAllowed ? "opacity-40 cursor-not-allowed" : ""
+                                  )}
+                                  aria-pressed={active}
+                                  aria-disabled={!isAllowed}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <div className={cx("text-xs font-semibold", textMuted)}>Units</div>
+                          <input
+                            value={unitValue}
+                            onChange={(e) => updateQuest(q.id, { unit: e.target.value })}
+                            disabled={measurementType === "habit"}
+                            className={cx(
+                              "mt-1 w-full rounded-xl border p-2 text-sm",
+                              measurementType === "habit" ? "opacity-60" : "",
+                              isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                            )}
+                          />
+                        </div>
+                      </div>
+
+                      <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+                      <div className="text-sm font-extrabold">Priority</div>
+                      <div
+                        className={cx(
+                          "mt-2 inline-flex w-fit items-center gap-1 rounded-full border p-0.5 text-sm font-semibold",
+                          isDark ? "border-zinc-700 bg-zinc-900" : "border-zinc-200 bg-white"
+                        )}
+                      >
+                        {[
+                          { id: "main", label: "Major" },
+                          { id: "minor", label: "Minor" },
+                        ].map((opt) => {
+                          const active = q.priority === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => updateQuest(q.id, { priority: opt.id })}
+                              className={cx(
+                                togglePillClass,
+                                active
+                                  ? isDark
+                                    ? "bg-white text-zinc-900"
+                                    : "bg-zinc-900 text-white"
+                                  : isDark
+                                  ? "text-zinc-400"
+                                  : "text-zinc-600"
+                              )}
+                              style={
+                                active
+                                  ? {
+                                      backgroundColor: isDark ? "#ffffff" : "#111827",
+                                      color: isDark ? "#111827" : "#ffffff",
+                                    }
+                                  : {
+                                      backgroundColor: "transparent",
+                                      color: isDark ? "#9CA3AF" : "#4B5563",
+                                    }
+                              }
+                              aria-pressed={active}
+                            >
                               {opt.label}
-                            </option>
-                          ))}
-                        </select>
+                            </button>
+                          );
+                        })}
+                      </div>
                       </div>
 
-                      <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>Measure</div>
-                        <select
-                          value={measurementType}
-                          onChange={(e) => {
-                            const nextMeasurementRaw = normalizeMeasurementType(e.target.value);
-                            const nextMeasurement = allowedKinds.includes(nextMeasurementRaw) ? nextMeasurementRaw : allowedKinds[0];
-                            const nextUnitType = unitTypeForMeasurement(nextMeasurement);
-                            const nextUnit =
-                              nextMeasurement === "count"
-                                ? (q.unit || defaultUnitForMeasurement(nextMeasurement))
-                                : defaultUnitForMeasurement(nextMeasurement);
-                            const nextTarget = measurementRequiresTarget(nextMeasurement)
-                              ? Math.max(1, Number(q.currentTargetValue) || 1)
-                              : 1;
-                            const nextSTarget = measurementRequiresTarget(nextMeasurement)
-                              ? Math.max(
-                                  1,
-                                  Number(q.sTargetValue) || defaultSTargetValue({ name: q.name, unitType: nextUnitType, category: domain })
-                                )
-                              : 1;
-                            const nextTargetMinutes = nextMeasurement === "time" ? Math.max(1, Number(q.targetMinutes || nextTarget)) : null;
-                            const nextGrace = nextMeasurement === "time" ? Number(q.graceMinutes ?? 10) : 0;
-                            updateQuest(q.id, {
-                              measurementType: nextMeasurement,
-                              unitType: nextUnitType,
-                              unit: nextUnit,
-                              currentTargetValue: nextTarget,
-                              sTargetValue: nextSTarget,
-                              targetMinutes: nextTargetMinutes,
-                              graceMinutes: nextGrace,
-                            });
-                          }}
-                          className={cx(
-                            "mt-1 w-full rounded-xl border p-2 text-sm",
-                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                          )}
-                        >
-                          {allowedKinds.map((kind) => (
-                            <option key={kind} value={kind}>
-                              {measurementLabel(kind)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>Cadence</div>
+                      <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+                        <div className="text-sm font-extrabold">Consistency</div>
                         <div
                           className={cx(
-                            "mt-1 inline-flex w-fit items-center gap-1 rounded-full border p-0.5 text-sm font-semibold",
+                            "mt-2 inline-flex w-fit items-center gap-1 rounded-full border p-0.5 text-sm font-semibold",
                             isDark ? "border-zinc-700 bg-zinc-900" : "border-zinc-200 bg-white"
                           )}
                         >
@@ -2302,7 +2719,7 @@ function QuestsPanel({
                                   })
                                 }
                                 className={cx(
-                                  "rounded-full px-2.5 py-1 text-sm font-semibold transition",
+                                  togglePillClass,
                                   active
                                     ? isDark
                                       ? "bg-white text-zinc-900"
@@ -2329,193 +2746,720 @@ function QuestsPanel({
                             );
                           })}
                         </div>
-                      </div>
-
-                      <div
-                        className={cx(
-                          "transition-all overflow-hidden",
-                          frequency === "weekly" ? "opacity-100 max-h-20" : "opacity-0 max-h-0 pointer-events-none"
-                        )}
-                        style={{ gridColumn: "1 / -1" }}
-                      >
-                        <div className={cx("text-xs font-semibold", textMuted)}>Weekly days</div>
-                        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-                          {WEEKDAY_LABELS.map((label, idx) => {
-                            const active = weeklyDays.includes(idx);
-                            return (
-                              <button
-                                key={label}
-                                type="button"
-                                onClick={() => {
-                                  if (!active && frequency !== "weekly") return;
-                                  const next = active ? weeklyDays.filter((d) => d !== idx) : [...weeklyDays, idx];
-                                  const safeNext = next.length ? next : weeklyDays;
-                                  updateQuest(q.id, { daysOfWeek: safeNext });
-                                }}
-                                className={cx(
-                                  "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
-                                  active
-                                    ? "text-zinc-900"
-                                    : isDark
-                                    ? "border-zinc-700 text-zinc-400"
-                                    : "border-zinc-200 text-zinc-600"
-                                )}
-                                style={{
-                                  borderColor: active
-                                    ? domainStyle.color
-                                    : isDark
-                                    ? "#0F172A"
-                                    : "#E5E7EB",
-                                  color: active
-                                    ? domainStyle.color
-                                    : isDark
-                                    ? "#FFFFFF"
-                                    : "#6B7280",
-                                  backgroundColor: active
-                                    ? rgba(domainStyle.color, isDark ? 0.2 : 0.12)
-                                    : isDark
-                                    ? "#374151"
-                                    : "#F3F4F6",
-                                }}
-                                aria-pressed={active}
-                              >
-                                {label}
-                              </button>
-                            );
-                          })}
+                        <div
+                          className={cx(
+                            "mt-3 transition-all overflow-hidden",
+                            frequency === "weekly" ? "opacity-100 max-h-20" : "opacity-0 max-h-0 pointer-events-none"
+                          )}
+                        >
+                          <div className="flex flex-wrap items-center justify-center gap-2">
+                            {WEEKDAY_LABELS.map((label, idx) => {
+                              const active = weeklyDays.includes(idx);
+                              return (
+                                <button
+                                  key={label}
+                                  type="button"
+                                  onClick={() => {
+                                    if (!active && frequency !== "weekly") return;
+                                    const next = active ? weeklyDays.filter((d) => d !== idx) : [...weeklyDays, idx];
+                                    const safeNext = next.length ? next : weeklyDays;
+                                    updateQuest(q.id, { daysOfWeek: safeNext });
+                                  }}
+                                  className={cx(
+                                    "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                                    active
+                                      ? "text-zinc-900"
+                                      : isDark
+                                      ? "border-zinc-700 text-zinc-400"
+                                      : "border-zinc-200 text-zinc-600"
+                                  )}
+                                  style={{
+                                    borderColor: active ? domainStyle.color : isDark ? "#0F172A" : "#E5E7EB",
+                                    color: active ? domainStyle.color : isDark ? "#FFFFFF" : "#9CA3AF",
+                                    backgroundColor: active
+                                      ? rgba(domainStyle.color, isDark ? 0.2 : 0.12)
+                                      : isDark
+                                      ? "#374151"
+                                      : "#FFFFFF",
+                                  }}
+                                  aria-pressed={active}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
 
-                      <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>Quest name</div>
-                        <input
-                          value={q.name}
-                          onChange={(e) => updateQuest(q.id, { name: e.target.value })}
-                          className={cx(
-                            "mt-1 w-full rounded-xl border p-2 text-sm",
-                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                          )}
-                        />
-                      </div>
+                      <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+                        <div className="text-sm font-extrabold">Quest Progression</div>
+                        <div className={cx("mt-1 text-xs", textMuted)}>Adjust mastery and current starting target.</div>
 
-                      {needsTarget ? (
-                        <>
-                          <div>
-                            <div className={cx("text-xs font-semibold", textMuted)}>Target</div>
-                            <input
-                              type="number"
-                              step={measurementType === "distance" ? "0.1" : "1"}
-                              value={q.currentTargetValue}
-                              onChange={(e) =>
-                                updateQuest(q.id, { currentTargetValue: Math.max(1, Number(e.target.value) || 1) })
-                              }
-                              className={cx(
-                                "mt-1 w-full rounded-xl border p-2 text-sm",
-                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                              )}
-                            />
-                          </div>
+                        {needsTarget ? (
+                          <>
+                            <div className="mt-4">
+                              <label className={cx("text-xs font-semibold", textMuted)} htmlFor={`s-rank-goal-${q.id}`}>
+                                Target Goal
+                              </label>
+                              <div className="mt-1 flex items-center gap-2">
+                                <input
+                                  id={`s-rank-goal-${q.id}`}
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  value={q.sTargetValue}
+                                  onChange={(e) =>
+                                    updateQuest(q.id, { sTargetValue: Math.max(1, Number(e.target.value) || 1) })
+                                  }
+                                  className={cx(
+                                    "w-full rounded-xl border p-2 text-sm",
+                                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                                  )}
+                                />
+                                <div
+                                  className={cx(
+                                    "rounded-full border px-2 py-1 text-[11px] font-semibold",
+                                    isDark ? "border-zinc-800 text-zinc-200" : "border-zinc-200 text-zinc-600"
+                                  )}
+                                >
+                                  {unitDisplay}
+                                </div>
+                              </div>
+                              <div className={cx("mt-1 text-xs", textMuted)}>S-Rank represents peak daily performance.</div>
+                            </div>
 
-                          <div>
-                            <div className={cx("text-xs font-semibold", textMuted)}>Unit</div>
-                            {measurementType === "count" ? (
+                            <div className="mt-4">
+                              <label className={cx("text-xs font-semibold", textMuted)} htmlFor={`start-target-${q.id}`}>
+                                Starting target (today)
+                              </label>
                               <input
-                                value={unitValue}
-                                onChange={(e) =>
+                                id={`start-target-${q.id}`}
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={q.currentTargetValue}
+                                onChange={(e) => {
+                                  const next = Math.max(1, Number(e.target.value) || 1);
                                   updateQuest(q.id, {
-                                    unit: (e.target.value || defaultUnitForMeasurement(measurementType)).trim(),
-                                  })
-                                }
+                                    currentTargetValue: next,
+                                    targetMinutes: isTimed ? next : q.targetMinutes,
+                                  });
+                                }}
                                 className={cx(
-                                  "mt-1 w-full rounded-xl border p-2 text-sm",
+                                  "mt-2 w-full rounded-xl border p-2 text-sm",
                                   isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
                                 )}
                               />
-                            ) : (
-                              <select
-                                value={unitValue}
-                                onChange={(e) => updateQuest(q.id, { unit: e.target.value })}
-                                className={cx(
-                                  "mt-1 w-full rounded-xl border p-2 text-sm",
-                                  isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                                )}
-                              >
-                                <option value={unitValue}>{unitValue}</option>
-                              </select>
+                            </div>
+
+                            <div className="mt-4">
+                              <div className={cx("text-xs font-semibold", textMuted)}>Rank Ladder</div>
+                              <div className="mt-2 grid grid-cols-6 gap-2 text-center text-[11px] font-semibold">
+                                {["E", "D", "C", "B", "A", "S"].map((rank) => {
+                                  const value = progressionPreview.ladder[rank];
+                                  const isStart = progressionPreview.startingRankLetter === rank;
+                                  const isTop = rank === "S";
+                                  return (
+                                    <div
+                                      key={rank}
+                                      className={cx(
+                                        "rounded-xl border px-2 py-2",
+                                        isStart
+                                          ? isDark
+                                            ? "border-zinc-100 text-zinc-100"
+                                            : "border-zinc-900 text-zinc-900"
+                                          : isDark
+                                          ? "border-zinc-800 text-zinc-400"
+                                          : "border-zinc-200 text-zinc-500"
+                                      )}
+                                      style={
+                                        isTop
+                                          ? { boxShadow: isDark ? "0 0 12px rgba(255,255,255,0.12)" : "0 0 12px rgba(15,23,42,0.08)" }
+                                          : undefined
+                                      }
+                                    >
+                                      <div className="text-[10px]">{rank}</div>
+                                      <div className="mt-1">{value}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div className="mt-4 flex flex-col gap-1 text-xs">
+                              <div className={cx("font-semibold", textMuted)}>
+                                Weekly increase: +{progressionPreview.weeklyIncrease} {unitDisplay}
+                              </div>
+                              <div className={cx("font-semibold", textMuted)}>
+                                Estimated time to S-Rank: {progressionPreview.estimatedWeeksToS} weeks
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div
+                            className={cx(
+                              "mt-3 rounded-xl border px-3 py-2 text-xs font-semibold",
+                              isDark ? "border-zinc-800 bg-zinc-950/20 text-zinc-200" : "border-zinc-200 bg-white text-zinc-600"
                             )}
+                          >
+                            This quest tracks completion only and does not require a target.
                           </div>
-
-                          <div>
-                            <div className={cx("text-xs font-semibold", textMuted)}>S Target</div>
-                            <input
-                              type="number"
-                              step={measurementType === "distance" ? "0.1" : "1"}
-                              value={q.sTargetValue}
-                              onChange={(e) =>
-                                updateQuest(q.id, { sTargetValue: Math.max(1, Number(e.target.value) || 1) })
-                              }
-                              className={cx(
-                                "mt-1 w-full rounded-xl border p-2 text-sm",
-                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                              )}
-                            />
-                          </div>
-                        </>
-                      ) : null}
-
-                      <div>
-                        <div className={cx("text-xs font-semibold", textMuted)}>Priority</div>
-                        <select
-                          value={q.priority}
-                          onChange={(e) => updateQuest(q.id, { priority: e.target.value })}
-                          className={cx(
-                            "mt-1 w-full rounded-xl border p-2 text-sm",
-                            isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                          )}
-                        >
-                          <option value="main">Major</option>
-                          <option value="minor">Minor</option>
-                        </select>
+                        )}
                       </div>
-
-                      {measurementType === "time" ? (
-                        <>
-                          <div>
-                            <div className={cx("text-xs font-semibold", textMuted)}>Target Minutes</div>
-                            <input
-                              type="number"
-                              min="1"
-                              value={q.targetMinutes ?? q.currentTargetValue}
-                              onChange={(e) =>
-                                updateQuest(q.id, { targetMinutes: Math.max(1, Number(e.target.value) || 1) })
-                              }
-                              className={cx(
-                                "mt-1 w-full rounded-xl border p-2 text-sm",
-                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                              )}
-                            />
-                          </div>
-                          <div>
-                            <div className={cx("text-xs font-semibold", textMuted)}>Grace Minutes</div>
-                            <input
-                              type="number"
-                              min="0"
-                              value={q.graceMinutes ?? 10}
-                              onChange={(e) => updateQuest(q.id, { graceMinutes: Math.max(0, Number(e.target.value) || 0) })}
-                              className={cx(
-                                "mt-1 w-full rounded-xl border p-2 text-sm",
-                                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
-                              )}
-                            />
-                          </div>
-                        </>
-                      ) : null}
                     </div>
                   ) : null}
                 </div>
               );
             })}
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={addModalOpen}
+        title="Forge a New Quest"
+        onClose={() => setAddModalOpen(false)}
+        isDark={isDark}
+        border={border}
+        surface={surface}
+        textMuted={textMuted}
+        showHint={false}
+        subtitle="Define the task that moves your life forward."
+      >
+        <style>{`
+          .hide-scrollbar::-webkit-scrollbar { display: none; }
+        `}</style>
+        <div className="hide-scrollbar max-h-[70vh] space-y-4 overflow-y-auto pr-1" style={{ scrollbarWidth: "none" }}>
+          <div>
+            <div className={cx("text-xs font-semibold", textMuted)}>Domain</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {QUEST_CATEGORIES.map((cat) => {
+                const active = newDomain === cat;
+                const color = DOMAIN_COLORS[cat] || "#94A3B8";
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => {
+                      const nextDomain = normalizeQuestCategory(cat);
+                      const nextActivityOptions = ACTIVITY_TYPES_BY_DOMAIN[nextDomain] || ACTIVITY_TYPES_BY_DOMAIN.life;
+                      const nextActivity = nextActivityOptions[0]?.id || "admin";
+                      const nextAllowed = allowedKindsForCategory(nextDomain, nextActivity);
+                      setNewDomain(nextDomain);
+                      setNewActivityKind(nextActivity);
+                      setNewMeasurementType(nextAllowed[0] || "reps");
+                    }}
+                    className={cx(
+                      "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                      active
+                        ? isDark
+                          ? "border-zinc-100 text-zinc-100"
+                          : "border-zinc-900 text-zinc-900"
+                        : isDark
+                        ? "border-zinc-800 text-zinc-400"
+                        : "border-zinc-200 text-zinc-600"
+                    )}
+                    style={
+                      active
+                        ? { borderColor: color, color, backgroundColor: rgba(color, isDark ? 0.18 : 0.12) }
+                        : undefined
+                    }
+                    aria-pressed={active}
+                  >
+                    {categoryLabel(cat)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className={cx("text-xs font-semibold", textMuted)}>Quest Name</div>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className={cx(
+                "mt-1 w-full rounded-xl border p-2 text-sm",
+                isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+              )}
+            />
+          </div>
+
+          <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+            <div className="text-sm font-extrabold">How is this quest completed?</div>
+
+            <div className="mt-3">
+              <div className={cx("text-xs font-semibold", textMuted)}>Type</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {newActivityOptions.map((opt) => {
+                  const active = newActivityKind === opt.id;
+                  const color = DOMAIN_COLORS[newDomain] || "#94A3B8";
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        const nextActivity = normalizeActivityKind(newDomain, opt.id);
+                        const nextAllowed = allowedKindsForCategory(newDomain, nextActivity);
+                        setNewActivityKind(nextActivity);
+                        setNewMeasurementType(nextAllowed.includes(effectiveNewMeasurement) ? effectiveNewMeasurement : nextAllowed[0]);
+                      }}
+                      className={cx(
+                        "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                        active
+                          ? isDark
+                            ? "border-zinc-100 text-zinc-100"
+                            : "border-zinc-900 text-zinc-900"
+                          : isDark
+                          ? "border-zinc-800 text-zinc-400"
+                          : "border-zinc-200 text-zinc-600"
+                      )}
+                      style={
+                        active
+                          ? { borderColor: color, color, backgroundColor: rgba(color, isDark ? 0.18 : 0.12) }
+                          : undefined
+                      }
+                      aria-pressed={active}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className={cx("text-xs font-semibold", textMuted)}>Metric</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {[
+                  { id: "reps", label: "Reps", unit: "reps" },
+                  { id: "time", label: "Time", unit: "min" },
+                  { id: "distance", label: "Distance", unit: "km" },
+                  { id: "count", label: "Count", unit: "x" },
+                  { id: "habit", label: "Habit", unit: "" },
+                ].map((opt) => {
+                  const active = effectiveNewMeasurement === opt.id;
+                  const isAllowed = newAllowedMeasurements.includes(opt.id);
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        if (!isAllowed) return;
+                        const nextUnitType = unitTypeForMeasurement(opt.id);
+                        const nextCurrent = defaultTargetForMeasurement(opt.id);
+                        const nextSTarget = "";
+                        setNewMeasurementType(opt.id);
+                        setNewUnit(opt.unit);
+                        setNewStartOverrideValue(nextCurrent);
+                        setNewStartOverrideActive(false);
+                        if (!hasGoal) setNewSTarget(nextSTarget);
+                      }}
+                      className={cx(
+                        "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                        active
+                          ? isDark
+                            ? "border-zinc-100 text-zinc-100"
+                            : "border-zinc-900 text-zinc-900"
+                          : isDark
+                          ? "border-zinc-800 text-zinc-400"
+                          : "border-zinc-200 text-zinc-600",
+                        !isAllowed ? "opacity-40 cursor-not-allowed" : ""
+                      )}
+                      aria-pressed={active}
+                      aria-disabled={!isAllowed}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className={cx("text-xs font-semibold", textMuted)}>Units</div>
+              <input
+                value={newUnit}
+                onChange={(e) => setNewUnit(e.target.value)}
+                disabled={effectiveNewMeasurement === "habit"}
+                className={cx(
+                  "mt-1 w-full rounded-xl border p-2 text-sm",
+                  effectiveNewMeasurement === "habit" ? "opacity-60" : "",
+                  isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                )}
+              />
+            </div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+            <div className="text-sm font-extrabold">Priority</div>
+            <div
+              className={cx(
+                "mt-2 inline-flex w-fit items-center gap-1 rounded-full border p-0.5 text-sm font-semibold",
+                isDark ? "border-zinc-700 bg-zinc-900" : "border-zinc-200 bg-white"
+              )}
+            >
+              {[
+                { id: "main", label: "Major" },
+                { id: "minor", label: "Minor" },
+              ].map((opt) => {
+                const active = newPriority === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setNewPriority(opt.id)}
+                    className={cx(
+                      togglePillClass,
+                      active
+                        ? isDark
+                          ? "bg-white text-zinc-900"
+                          : "bg-zinc-900 text-white"
+                                    : isDark
+                                    ? "text-zinc-400"
+                                    : "text-zinc-600"
+                                )}
+                    style={
+                      active
+                        ? {
+                            backgroundColor: isDark ? "#ffffff" : "#111827",
+                            color: isDark ? "#111827" : "#ffffff",
+                          }
+                        : {
+                            backgroundColor: "transparent",
+                            color: isDark ? "#9CA3AF" : "#4B5563",
+                          }
+                    }
+                    aria-pressed={active}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+            <div className="text-sm font-extrabold">Consistency</div>
+            <div
+              className={cx(
+                "mt-2 inline-flex w-fit items-center gap-1 rounded-full border p-0.5 text-sm font-semibold",
+                isDark ? "border-zinc-700 bg-zinc-900" : "border-zinc-200 bg-white"
+              )}
+            >
+              {["daily", "weekly"].map((opt) => {
+                const active = newFrequency === opt;
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => {
+                      setNewFrequency(opt);
+                      if (opt === "daily") setNewDaysOfWeek([]);
+                    }}
+                    className={cx(
+                      togglePillClass,
+                      active
+                        ? isDark
+                          ? "bg-white text-zinc-900"
+                          : "bg-zinc-900 text-white"
+                        : isDark
+                        ? "text-zinc-400"
+                        : "text-zinc-600"
+                    )}
+                    style={
+                      active
+                        ? {
+                            backgroundColor: isDark ? "#ffffff" : "#111827",
+                            color: isDark ? "#111827" : "#ffffff",
+                          }
+                        : {
+                            backgroundColor: "transparent",
+                            color: isDark ? "#9CA3AF" : "#4B5563",
+                          }
+                    }
+                    aria-pressed={active}
+                  >
+                    {opt === "daily" ? "Daily" : "Weekly"}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              className={cx(
+                "mt-3 transition-all overflow-hidden",
+                newFrequency === "weekly" ? "opacity-100 max-h-20" : "opacity-0 max-h-0 pointer-events-none"
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {WEEKDAY_LABELS.map((label, idx) => {
+                  const active = newDaysOfWeek.includes(idx);
+                  const color = DOMAIN_COLORS[newDomain] || "#94A3B8";
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => {
+                        const next = active ? newDaysOfWeek.filter((d) => d !== idx) : [...newDaysOfWeek, idx];
+                        setNewDaysOfWeek(next);
+                      }}
+                      className={cx(
+                        "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                        active
+                          ? "text-zinc-900"
+                          : isDark
+                          ? "border-zinc-700 text-zinc-400"
+                          : "border-zinc-200 text-zinc-600"
+                      )}
+                      style={{
+                        borderColor: active ? color : isDark ? "#0F172A" : "#E5E7EB",
+                        color: active ? color : isDark ? "#FFFFFF" : "#9CA3AF",
+                        backgroundColor: active ? rgba(color, isDark ? 0.2 : 0.12) : isDark ? "#374151" : "#FFFFFF",
+                      }}
+                      aria-pressed={active}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className={cx("rounded-2xl border p-3", isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white")}>
+            <div className="text-sm font-extrabold">Quest Progression</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>Set mastery, we’ll calculate your starting rank and growth plan.</div>
+
+            <div className="mt-4">
+              <label className={cx("text-xs font-semibold", textMuted)} htmlFor="s-rank-goal">
+                Target Goal
+              </label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  id="s-rank-goal"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={newSTarget}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setNewSTarget(raw);
+                    const next = Math.max(1, Number(raw) || 1);
+                    if (!newStartOverrideActive && raw !== "") {
+                      setNewStartOverrideValue(Math.max(1, Math.round(next * 0.1)));
+                    }
+                    if (planTimeoutRef.current) clearTimeout(planTimeoutRef.current);
+                    if (raw !== "") {
+                      setIsGeneratingPlan(true);
+                      planTimeoutRef.current = setTimeout(() => {
+                        setIsGeneratingPlan(false);
+                      }, 600);
+                    } else {
+                      setIsGeneratingPlan(false);
+                    }
+                  }}
+                  className={cx(
+                    "w-full rounded-xl border p-2 text-sm",
+                    isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                  )}
+                />
+                <div className={cx("rounded-full border px-2 py-1 text-[11px] font-semibold", isDark ? "border-zinc-800 text-zinc-200" : "border-zinc-200 text-zinc-600")}>
+                  {unitDisplay}
+                </div>
+              </div>
+              <div className={cx("mt-1 text-xs", textMuted)}>S-Rank represents peak daily performance.</div>
+            </div>
+            {!hasGoal ? (
+              <div className={cx("mt-3 rounded-xl border px-3 py-2 text-xs font-semibold", isDark ? "border-zinc-800 bg-zinc-950/20 text-zinc-200" : "border-zinc-200 bg-white text-zinc-600")}>
+                Choose a target to generate your personalized routine.
+              </div>
+            ) : null}
+
+            {hasGoal && isGeneratingPlan ? (
+              <div
+                className={cx(
+                  "mt-3 animate-pulse rounded-xl border px-3 py-2 text-xs font-semibold",
+                  isDark ? "border-zinc-800 bg-zinc-950/20 text-zinc-200" : "border-zinc-200 bg-white text-zinc-600"
+                )}
+              >
+                Creating your personalized routine…
+              </div>
+            ) : null}
+
+            {hasGoal ? (
+              <div className="mt-4 rounded-xl border p-3" style={{ borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.08)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className={cx("text-xs font-semibold", textMuted)}>Starting Rank (recommended)</div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className={cx("rounded-full border px-2 py-0.5 text-[11px] font-semibold", isDark ? "border-zinc-700 text-zinc-100" : "border-zinc-200 text-zinc-700")}>
+                      {progressionPreview.startingRankLetter}-Rank
+                    </span>
+                    <span className={cx("text-sm font-bold", isDark ? "text-zinc-100" : "text-zinc-900")}>
+                      {progressionPreview.startTarget} {unitDisplay}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={cx(
+                    "rounded-full border px-3 py-1 text-[11px] font-semibold transition",
+                    isDark ? "border-zinc-700 text-zinc-200" : "border-zinc-200 text-zinc-600"
+                  )}
+                  onClick={() => setShowStartAdjust((v) => !v)}
+                >
+                  {showStartAdjust ? "Hide" : "Adjust"}
+                </button>
+              </div>
+              {showStartAdjust ? (
+                <div className="mt-3">
+                  <label className={cx("text-xs font-semibold", textMuted)} htmlFor="start-target">
+                    If this feels too easy, set your real starting target
+                  </label>
+                  <input
+                    id="start-target"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={newStartOverrideValue}
+                    onChange={(e) => {
+                      const next = Math.max(1, Number(e.target.value) || 1);
+                      setNewStartOverrideValue(next);
+                      setNewStartOverrideActive(true);
+                    }}
+                    className={cx(
+                      "mt-2 w-full rounded-xl border p-2 text-sm",
+                      isDark ? "border-zinc-800 bg-zinc-950/10" : "border-zinc-200 bg-white"
+                    )}
+                  />
+                </div>
+              ) : null}
+            </div>
+            ) : null}
+
+            {hasGoal ? (
+            <div className="mt-4">
+              <div className={cx("text-xs font-semibold", textMuted)}>Rank Ladder</div>
+              <div className="mt-2 grid grid-cols-6 gap-2 text-center text-[11px] font-semibold">
+                {["E", "D", "C", "B", "A", "S"].map((rank) => {
+                  const value = progressionPreview.ladder[rank];
+                  const isStart = progressionPreview.startingRankLetter === rank;
+                  const isTop = rank === "S";
+                  return (
+                    <div
+                      key={rank}
+                      className={cx(
+                        "rounded-xl border px-2 py-2",
+                        isStart
+                          ? isDark
+                            ? "border-zinc-100 text-zinc-100"
+                            : "border-zinc-900 text-zinc-900"
+                          : isDark
+                          ? "border-zinc-800 text-zinc-400"
+                          : "border-zinc-200 text-zinc-500"
+                      )}
+                      style={isTop ? { boxShadow: isDark ? "0 0 12px rgba(255,255,255,0.12)" : "0 0 12px rgba(15,23,42,0.08)" } : undefined}
+                    >
+                      <div className="text-[10px]">{rank}</div>
+                      <div className="mt-1">{value}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            ) : null}
+
+            {hasGoal ? (
+            <div className="mt-4 flex flex-col gap-1 text-xs">
+              <div className={cx("font-semibold", textMuted)}>
+                Weekly increase: +{progressionPreview.weeklyIncrease} {unitDisplay}
+              </div>
+              <div className={cx("font-semibold", textMuted)}>
+                Estimated time to S-Rank: {progressionPreview.estimatedWeeksToS} weeks
+              </div>
+            </div>
+            ) : null}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setAddModalOpen(false)} isDark={isDark}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!canCreate}
+              onClick={() => {
+                const formState = {
+                  domain: newDomain,
+                  activityKind: newActivityKind,
+                  measurementType: effectiveNewMeasurement,
+                  name: trimmedName,
+                  priority: newPriority,
+                  unit: trimmedUnit,
+                  frequency: newFrequency,
+                  daysOfWeek: newDaysOfWeek,
+                  sRankTarget: goalValue,
+                  startTarget: newStartOverrideValue,
+                };
+                console.log("CreateQuest clicked", formState);
+                if (validationError) {
+                  setCreateError(validationError);
+                  return;
+                }
+                try {
+                  setCreateError("");
+                  const sessionsPerWeek = sessionsPerWeekFromConsistency(newFrequency, newDaysOfWeek);
+                  const finalGoal = hasGoal ? goalValue : 1;
+                  const safeStartTarget =
+                    newStartOverrideActive && Number.isFinite(newStartOverrideValue) && newStartOverrideValue > 0
+                      ? newStartOverrideValue
+                      : undefined;
+                  const progression = buildQuestProgression({
+                    sRankTarget: finalGoal,
+                    startTarget: safeStartTarget,
+                    startTargetWasAuto: !newStartOverrideActive,
+                    sessionsPerWeek,
+                  });
+                  const payload = {
+                    domain: newDomain,
+                    activityKind: newActivityKind,
+                    measurementType: effectiveNewMeasurement,
+                    name: trimmedName,
+                    priority: newPriority,
+                    unit: trimmedUnit,
+                    currentTargetValue: progression.startTarget,
+                    sTargetValue: progression.sRankTarget,
+                    startTargetWasAuto: progression.startTargetWasAuto,
+                    frequency: newFrequency,
+                    daysOfWeek: newFrequency === "weekly" ? newDaysOfWeek : defaultWeeklyDays(),
+                  };
+                  console.log("payload", payload);
+                  const createdId = addQuest(payload);
+                  console.log("saved", createdId);
+                  setAddModalOpen(false);
+                  resetNewQuestDefaults(newDomain);
+                  setJustCreatedId(createdId || "");
+                  setJustCreatedDomain(newDomain);
+                  setCategoryFilter(newDomain);
+                  if (createdId) {
+                    setExpandedById((prev) => ({ ...prev, [createdId]: true }));
+                  }
+                } catch (error) {
+                  console.error("CreateQuest error", error);
+                  setCreateError("Failed to create quest. Check the console for details.");
+                }
+              }}
+              isDark={isDark}
+            >
+              Create Quest
+            </Button>
+          </div>
+          {validationError ? (
+            <div className={cx("text-xs font-semibold", isDark ? "text-amber-200" : "text-amber-700")}>{validationError}</div>
+          ) : null}
+          {createError ? (
+            <div className={cx("text-xs font-semibold", isDark ? "text-rose-200" : "text-rose-700")}>{createError}</div>
+          ) : null}
         </div>
       </Modal>
     </div>
@@ -2603,7 +3547,7 @@ function ProgressDashboard({
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm font-extrabold">Weekly XP</div>
-            <div className={cx("mt-1 text-xs", textMuted)}>Mon–Sun</div>
+            <div className={cx("mt-1 text-xs", textMuted)}>M–S</div>
           </div>
           <div className={cx("text-xs font-semibold", textMuted)}>This week: {totalXP} XP</div>
         </div>
@@ -3144,10 +4088,7 @@ export default function LevelUpQuestBoard() {
     const savedRaw = safeJsonParse(localStorage.getItem(STORAGE_KEY) || "", null);
     const saved = migrateSavedState(savedRaw) || savedRaw;
     if (saved && typeof saved === "object") {
-      const normalizedQuests = (saved.quests || DEFAULT_QUESTS).map((q) => {
-        const createdAt = typeof q.createdAt === "number" ? q.createdAt : 0;
-        return normalizeQuest({ ...q, createdAt });
-      });
+      const normalizedQuests = (saved.quests || DEFAULT_QUESTS).map((q) => normalizeQuest(q));
       const xpFromDays = {};
       for (const entry of Object.values(saved.days || {})) {
         if (!entry?.completed) continue;
@@ -3622,45 +4563,69 @@ export default function LevelUpQuestBoard() {
     }));
   }
 
-  function addQuest() {
-    const id = `q_${Math.random().toString(16).slice(2)}`;
-    const category = "body";
-    const domain = "body";
-    const activityKind = "strength";
-    const measurementType = "reps";
+  function addQuest(config = {}) {
+    const id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `q_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
+    const domain = normalizeQuestCategory(config.domain || "body");
+    const activityKind = normalizeActivityKind(domain, config.activityKind || "strength");
+    const allowed = allowedKindsForCategory(domain, activityKind);
+    const measurementType = allowed.includes(config.measurementType) ? config.measurementType : allowed[0] || "reps";
     const unitType = unitTypeForMeasurement(measurementType);
-    const unit = defaultUnitForMeasurement(measurementType);
-    const currentTargetValue = 10;
-    const createdAt = Date.now();
+    const unit = String(config.unit || defaultUnitForMeasurement(measurementType)).trim();
+    const frequency = normalizeFrequency(config.frequency || "daily");
+    const daysOfWeek =
+      frequency === "daily"
+        ? defaultWeeklyDays()
+        : normalizeDaysOfWeek(config.daysOfWeek);
+    const sessionsPerWeek = sessionsPerWeekFromConsistency(frequency, daysOfWeek);
+    const rawS = Math.max(1, Number(config.sTargetValue ?? 10) || 1);
+    const rawStart = Math.max(1, Number(config.currentTargetValue ?? 1) || 1);
+    const progression = buildQuestProgression({
+      sRankTarget: rawS,
+      startTarget: rawStart,
+      startTargetWasAuto: config.startTargetWasAuto ?? false,
+      sessionsPerWeek,
+    });
+    const currentTargetValue = progression.startTarget;
+    const createdAt = new Date().toISOString();
+    const baselineValue = currentTargetValue;
+    const name = String(config.name || "New Quest").trim() || "New Quest";
+    const priority = config.priority === "minor" ? "minor" : "main";
+    const targetMinutes = measurementType === "time" ? Math.max(1, Number(config.targetMinutes ?? currentTargetValue) || 1) : null;
+    const graceMinutes = measurementType === "time" ? DEFAULT_GRACE_MINUTES : 0;
     setState((prev) => ({
       ...prev,
       quests: [
         {
           id,
-          name: "New Quest",
-          category,
+          name,
+          category: domain,
           domain,
           activityKind,
           measurementType,
           unit,
           unitType,
           currentTargetValue,
-          sTargetValue: defaultSTargetValue({ name: "New Quest", unitType, category }),
-          baselineValue: currentTargetValue,
-          priority: "main",
+          sTargetValue: progression.sRankTarget,
+          baselineValue,
+          priority,
           xp: 0,
-          frequency: "daily",
-          daysOfWeek: defaultWeeklyDays(),
+          frequency,
+          daysOfWeek,
+          progression,
           createdAt,
           status: "idle",
           startedAt: null,
           elapsedMs: 0,
-          targetMinutes: null,
-          graceMinutes: 10,
+          targetMinutes,
+          graceMinutes,
         },
         ...prev.quests,
       ],
     }));
+    return id;
   }
 
   function deleteQuest(id) {

@@ -69,7 +69,7 @@ const PRESET_VALUES = {
   defaultDistance: { beginner: [1, 5], standard: [2, 10], hardcore: [5, 15] },
 };
 
-const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
 
 const TERMS_TITLE = "Set Your Terms.";
 
@@ -375,7 +375,7 @@ export default function Onboarding({ onComplete }) {
       const currentTargetValue = Math.max(1, Number.isFinite(currentRaw) ? currentRaw : 1);
       const sTargetValue = Math.max(currentTargetValue, Number.isFinite(sRaw) ? sRaw : currentTargetValue);
       const frequency = cfg.frequency === "weekly" ? "weekly" : "daily";
-      const daysOfWeek = Array.isArray(cfg.daysOfWeek) && cfg.daysOfWeek.length ? cfg.daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
+      const daysOfWeek = Array.isArray(cfg.daysOfWeek) ? cfg.daysOfWeek : [];
       return {
         id: `q_${t.id}_${createdAt + idx}`,
         name: t.name,
@@ -387,7 +387,7 @@ export default function Onboarding({ onComplete }) {
         priority: "main",
         xp: 0,
         frequency,
-        daysOfWeek,
+        daysOfWeek: frequency === "daily" ? [0, 1, 2, 3, 4, 5, 6] : daysOfWeek,
         createdAt: createdAt + idx,
       };
     });
@@ -707,7 +707,7 @@ export default function Onboarding({ onComplete }) {
                               const cfg = taskConfig[t.id] || {};
                               const frequency = cfg.frequency === "weekly" ? "weekly" : "daily";
                               const daysOfWeek = Array.isArray(cfg.daysOfWeek) ? cfg.daysOfWeek : [];
-                              const weeklyDays = daysOfWeek.length ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
+                              const weeklyDays = daysOfWeek;
                               const selectedStyle = active
                                 ? {
                                     borderColor: domainColor,
@@ -834,12 +834,12 @@ export default function Onboarding({ onComplete }) {
                                                 ? domainColor
                                                 : isDark
                                                 ? "#FFFFFF"
-                                                : "#6B7280",
+                                                : "#9CA3AF",
                                               backgroundColor: isActive
                                                 ? rgba(domainColor, isDark ? 0.2 : 0.12)
                                                 : isDark
                                                 ? "#374151"
-                                                : "#F3F4F6",
+                                                : "#FFFFFF",
                                             }}
                                             aria-pressed={isActive}
                                           >
